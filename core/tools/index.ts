@@ -1,10 +1,13 @@
 import { ConfigDependentToolParams, Tool } from "..";
 import { isRecommendedAgentModel } from "../llm/toolSupport";
 import * as toolDefinitions from "./definitions";
+import { buildReadSkillTool, loadSkillSummaries } from "./definitions/readSkill";
 
 // I'm writing these as functions because we've messed up 3 TIMES by pushing to const, causing duplicate tool definitions on subsequent config loads.
 export const getBaseToolDefinitions = () => [
   toolDefinitions.readFileTool,
+  toolDefinitions.lsTool,
+  toolDefinitions.globSearchTool,
   toolDefinitions.askQuestionTool,
   toolDefinitions.runTerminalCommandTool,
   toolDefinitions.createRuleBlock,
@@ -18,7 +21,12 @@ export const getConfigDependentToolDefinitions = async (
   const tools: Tool[] = [];
 
   tools.push(await toolDefinitions.requestRuleTool(params));
-  tools.push(await toolDefinitions.readSkillTool(params));
+
+  // A skill tool with nothing to read is one more choice for the model and no gain.
+  const skills = await loadSkillSummaries(params.ide);
+  if (skills.length > 0) {
+    tools.push(buildReadSkillTool(skills));
+  }
 
   tools.push(toolDefinitions.searchWebTool);
 

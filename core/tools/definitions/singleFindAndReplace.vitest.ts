@@ -18,7 +18,15 @@ describe("editsFromSingleFindArgs", () => {
     ]);
   });
 
-  it("accepts one old_string and new_string pair", () => {
+  it("accepts old_text and new_text as aliases", () => {
+    expect(
+      editsFromSingleFindArgs({
+        replacements: [{ old_text: "a", new_text: "b" }],
+      }),
+    ).toEqual([{ old_string: "a", new_string: "b", replace_all: false }]);
+  });
+
+  it("accepts a single old_string/new_string pair", () => {
     expect(
       editsFromSingleFindArgs({
         old_string: "a",

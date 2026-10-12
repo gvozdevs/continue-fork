@@ -11,6 +11,7 @@ import {
   resolveExistingFile,
   resolveNewFile,
   singleFindHasEdits,
+  throwIfEditArgsTooLarge,
 } from "../fileWritePlan";
 import { EditOperation } from "./multiEdit";
 
@@ -27,26 +28,66 @@ export interface SingleFindAndReplaceArgs {
 export function schemaArgsForSingleFind(
   args: Record<string, unknown>,
 ): Record<string, unknown> {
-  if (Array.isArray(args.replacements)) {
-    return args;
+  const normalized = normalizeFindArgs(args);
+  if (Array.isArray(normalized.replacements)) {
+    return normalized;
   }
-  if (!("old_string" in args) && !("new_string" in args)) {
-    return args;
+  if (!("old_string" in normalized) && !("new_string" in normalized)) {
+    return normalized;
   }
   return {
-    ...args,
+    ...normalized,
     replacements: [
       {
-        old_string: args.old_string,
-        new_string: args.new_string,
+        old_string: normalized.old_string,
+        new_string: normalized.new_string,
       },
     ],
+  };
+}
+
+function pickEditText(
+  record: Record<string, unknown>,
+  keys: string[],
+): unknown {
+  for (const key of keys) {
+    if (key in record) {
+      return record[key];
+    }
+  }
+  return undefined;
+}
+
+function normalizeFindArgs(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const old_string = pickEditText(args, ["old_string", "old_text"]);
+  const new_string = pickEditText(args, ["new_string", "new_text"]);
+  const replacements = Array.isArray(args.replacements)
+    ? args.replacements.map((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) {
+          return item;
+        }
+        const record = item as Record<string, unknown>;
+        return {
+          ...record,
+          old_string: pickEditText(record, ["old_string", "old_text"]),
+          new_string: pickEditText(record, ["new_string", "new_text"]),
+        };
+      })
+    : args.replacements;
+  return {
+    ...args,
+    ...(old_string !== undefined ? { old_string } : {}),
+    ...(new_string !== undefined ? { new_string } : {}),
+    ...(replacements !== undefined ? { replacements } : {}),
   };
 }
 
 export function editsFromSingleFindArgs(
   args: Record<string, unknown>,
 ): EditOperation[] {
+  args = normalizeFindArgs(args);
   if ("replacements" in args && args.replacements !== undefined) {
     if (!Array.isArray(args.replacements)) {
       throw new ContinueError(
@@ -102,6 +143,7 @@ export async function prepareSingleFind(
   ide: IDE,
 ): Promise<PreparedFileEdit | PreparedFileCreate> {
   const filepath = requireFilepath(args.filepath);
+  throwIfEditArgsTooLarge(args);
   if (!singleFindHasEdits(args)) {
     if (typeof args.contents !== "string") {
       throw new ContinueError(
@@ -143,22 +185,15 @@ export const singleFindAndReplaceTool: Tool = {
   isInstant: false,
   function: {
     name: BuiltInToolNames.SingleFindAndReplace,
-    description: `Create a file that does not exist, or replace exact text in a file that exists.
+    description: `Create a file that does not exist, or replace text in a file that exists. Call it as soon as the new text is ready: name the step in the reply and put the text only in this call.
 
-To create a missing file, pass filepath and contents. Do not pass replacements.
-To change an existing file, pass filepath and replacements. Read the file first. Do not pass contents.
-If the file already exists, contents is rejected. If it does not exist, replacements are rejected.
-Do not print the file in the reply. The file text belongs only in this call.
+Missing file: pass filepath and contents.
+Existing file: read it with ${BuiltInToolNames.ReadFile}, then pass filepath and replacements, each with old_string and new_string. Contents on an existing file and replacements on a missing file are rejected; nothing is overwritten.
+Each old_string, new_string, and contents value must be at most 6000 characters. Split a longer change into several replacements.
 
-IMPORTANT:
-- Pass every replacement already known for this file in the replacements array of this one call. One item is enough. Do not list the replacements in prose first.
-- When editing text from \`${BuiltInToolNames.ReadFile}\` tool output, ensure you preserve exact whitespace/indentation.
-- Only use emojis if the user explicitly requests it. Avoid adding emojis to files unless asked.
-- Each old_string must match exactly once. If it appears more than once, include more surrounding lines in that same item until it is unique.
-
-WARNINGS:
-- The edit will FAIL if an old_string is not unique in the file at the moment that item is applied. Widen it with surrounding context and call again.
-- The edit will likely fail if you have not recently used the \`${BuiltInToolNames.ReadFile}\` tool to view up-to-date file contents.`,
+old_string is the smallest span that occurs once in the file: a few lines around the change, or a function header with its first lines. Copy it from the read result. Differences in indentation and blank lines are tolerated. new_string is the text that takes its place.
+To rewrite a long function, either use one replacement whose old_string is the whole function, or several replacements in this one call, each pinned to a few lines. If old_string occurs more than once, add the line before or after it.
+Keep emojis out of files unless the user asks for them.`,
     parameters: {
       type: "object",
       required: ["filepath"],
@@ -179,17 +214,24 @@ WARNINGS:
               type: "array",
               items: {
                 type: "object",
-                required: ["old_string", "new_string"],
                 properties: {
                   old_string: {
                     type: "string",
                     description:
-                      "The text to replace. It must match exactly once, including whitespace and indentation.",
+                      "The span to replace: the smallest text that occurs once in the file, copied from the read result. Indentation and blank-line differences are tolerated. old_text is accepted as an alias.",
+                  },
+                  old_text: {
+                    type: "string",
+                    description: "Alias for old_string.",
                   },
                   new_string: {
                     type: "string",
                     description:
-                      "The text to replace it with. It must differ from old_string.",
+                      "The text that takes the place of old_string. It must differ from old_string. new_text is accepted as an alias.",
+                  },
+                  new_text: {
+                    type: "string",
+                    description: "Alias for new_string.",
                   },
                 },
               },
@@ -197,7 +239,7 @@ WARNINGS:
             { type: "null" },
           ],
           description:
-            "Every replacement already known for an existing file, applied in order. Use one item when there is only one change. Omit this when creating a file with contents.",
+            "Changes to an existing file, applied in order in this one call. One item is enough for one change. Omit this when creating a file with contents.",
         },
       },
     },

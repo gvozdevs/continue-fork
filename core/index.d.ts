@@ -542,6 +542,7 @@ export interface ChatHistoryItem {
   reasoning?: Reasoning;
   appliedRules?: RuleMetadata[];
   conversationSummary?: string;
+  hidden?: boolean;
 }
 
 export interface LLMFullCompletionOptions extends BaseCompletionOptions {
@@ -1219,6 +1220,7 @@ export interface BaseCompletionOptions {
   toolChoice?: ToolChoice;
   reasoning?: boolean;
   reasoningBudgetTokens?: number;
+  reasoningEffort?: "low" | "medium" | "high" | "minimal";
   promptCaching?: boolean;
 }
 
@@ -1460,8 +1462,25 @@ export interface ContinueUIConfig {
   continueAfterToolRejection?: boolean;
   /** When false, the chat does not summarize history as the context fills. Defaults to enabled. */
   autoCompactContext?: boolean;
+  /**
+   * When true, finished rounds can start a summary.
+   * The context-window backstop still applies when auto-compact is on.
+   * Defaults to off.
+   */
+  compactStaleHistory?: boolean;
+  /**
+   * Tokens of finished rounds, beyond the original task and the recent tail,
+   * that start a summary. Defaults to 30_000.
+   */
+  staleHistoryTokenLimit?: number;
   /** When true, chat requests and model responses are appended to .continue/logs/llm.log. */
   logLlmTraffic?: boolean;
+  /**
+   * Maximum tokens one file read may place in context.
+   * Larger files return a window and the next line range.
+   * Defaults to 25_000 and never exceeds half the model context.
+   */
+  readFileMaxTokens?: number;
 }
 
 export interface ContextMenuConfig {

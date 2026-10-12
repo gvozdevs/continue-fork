@@ -2,6 +2,7 @@ import iconv from "iconv-lite";
 import childProcess from "node:child_process";
 import os from "node:os";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
+import { tailTerminalOutput } from "./terminalOutput";
 
 // Default timeout for terminal commands (2 minutes)
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
@@ -45,7 +46,11 @@ import {
   removeRunningProcess,
   updateProcessOutput,
 } from "../../util/processTerminalStates";
-import { getBooleanArg, getStringArg } from "../parseArgs";
+import { getBooleanArg } from "../parseArgs";
+import {
+  commandsFromArgs,
+  prepareWindowsPowerShellCommand,
+} from "./windowsShell";
 
 /**
  * Resolves the working directory from workspace dirs.
@@ -107,13 +112,17 @@ const getColorEnv = () => ({
 const LOCAL_ONLY = ["", "local"];
 
 export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
-  const command = getStringArg(args, "command");
+  let command = commandsFromArgs(args).join("; ");
   // Default to waiting for completion if not specified
   const waitForCompletion =
     getBooleanArg(args, "waitForCompletion", false) ?? true;
 
   const ideInfo = await extras.ide.getIdeInfo();
   const toolCallId = extras.toolCallId || "";
+
+  if (LOCAL_ONLY.includes(ideInfo.remoteName) && process.platform === "win32") {
+    command = prepareWindowsPowerShellCommand(command);
+  }
 
   if (LOCAL_ONLY.includes(ideInfo.remoteName)) {
     // For streaming output
@@ -302,7 +311,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                   {
                     name: "Terminal",
                     description: "Terminal command output",
-                    content: terminalOutput,
+                    content: tailTerminalOutput(terminalOutput),
                     status: status,
                   },
                 ]);
@@ -312,7 +321,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                   {
                     name: "Terminal",
                     description: "Terminal command output",
-                    content: terminalOutput,
+                    content: tailTerminalOutput(terminalOutput),
                     status: status,
                   },
                 ]);
@@ -483,7 +492,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             {
               name: "Terminal",
               description: "Terminal command output",
-              content: output.stdout ?? "",
+              content: tailTerminalOutput(output.stdout ?? ""),
               status: status,
             },
           ];
@@ -493,7 +502,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             {
               name: "Terminal",
               description: "Terminal command output",
-              content: error.stderr ?? error.toString(),
+              content: tailTerminalOutput(error.stderr ?? error.toString()),
               status: status,
             },
           ];

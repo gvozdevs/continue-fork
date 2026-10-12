@@ -5,11 +5,11 @@ import { ContextItem, ToolExtras } from "../..";
 import { ToolImpl } from ".";
 import { throwIfFileIsSecurityConcern } from "../../indexing/ignore";
 import { countTokensAsync } from "../../llm/countTokens";
-import { filePathsFromArg } from "../definitions/readFile";
+import { readTargetsFromArgs } from "../definitions/readFile";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
+import { readFileTokenLimit } from "../readFileMaxTokens";
 import {
   limitLines,
-  optionalLine,
   readWindowNotice,
   sliceFileLines,
 } from "./readFileWindow";
@@ -51,7 +51,10 @@ async function readOneFile(
   }
 
   const model = extras.config.selectedModelByRole.chat;
-  const tokenLimit = model ? model.contextLength / 2 : undefined;
+  const tokenLimit = readFileTokenLimit(
+    model,
+    extras.config.ui?.readFileMaxTokens,
+  );
   const fitted = await limitLines(sliced.lines, tokenLimit, (text) =>
     countTokensAsync(text, model?.title ?? ""),
   );
@@ -80,22 +83,27 @@ async function readOneFile(
 }
 
 export const readFileImpl: ToolImpl = async (args, extras) => {
-  const paths = filePathsFromArg(args.filepath);
-  if (paths.length === 0) {
+  const targets = readTargetsFromArgs(args);
+  if (targets.length === 0) {
     throw new Error(
-      "`filepath` argument is required and must not be empty or whitespace-only. Pass a path or an array of paths.",
+      "`files` or `filepath` is required and must not be empty. Pass files: [{ path, start_line, end_line }] so each file can have its own range, or filepath as a path or array of paths.",
     );
   }
 
-  const startLine = optionalLine(args, "start_line", "startLine");
-  const endLine = optionalLine(args, "end_line", "endLine");
   const items: ContextItem[] = [];
   const errors: string[] = [];
-  for (const filepath of paths) {
+  for (const target of targets) {
     try {
-      items.push(await readOneFile(filepath, extras, startLine, endLine));
+      items.push(
+        await readOneFile(
+          target.path,
+          extras,
+          target.start_line,
+          target.end_line,
+        ),
+      );
     } catch (error) {
-      if (paths.length === 1) {
+      if (targets.length === 1) {
         throw error;
       }
       errors.push(error instanceof Error ? error.message : String(error));

@@ -2,6 +2,8 @@ import {
   SharedConfigSchema,
   modifyAnyConfigWithSharedConfig,
 } from "core/config/sharedConfig";
+import { DEFAULT_READ_FILE_MAX_TOKENS } from "core/tools/readFileMaxTokens";
+import { staleHistoryTokenLimit } from "core/util/autoCompact";
 import { useContext, useEffect, useState } from "react";
 import { Card, Toggle, useFontSize } from "../../../components/ui";
 import { IdeMessengerContext } from "../../../context/IdeMessenger";
@@ -51,6 +53,12 @@ export function UserSettingsSection() {
   const continueAfterToolRejection =
     config.ui?.continueAfterToolRejection ?? false;
   const autoCompactContext = config.ui?.autoCompactContext !== false;
+  const compactStaleHistory = config.ui?.compactStaleHistory === true;
+  const finishedRoundLimit = staleHistoryTokenLimit(
+    config.ui?.staleHistoryTokenLimit,
+  );
+  const readFileMaxTokens =
+    config.ui?.readFileMaxTokens ?? DEFAULT_READ_FILE_MAX_TOKENS;
   const logLlmTraffic = config.ui?.logLlmTraffic === true;
   const codeWrap = config.ui?.codeWrap ?? false;
   const showChatScrollbar = config.ui?.showChatScrollbar ?? false;
@@ -135,6 +143,45 @@ export function UserSettingsSection() {
                   onChange={(value) =>
                     handleUpdate({ autoCompactContext: value })
                   }
+                />
+                <UserSetting
+                  type="toggle"
+                  title="Compact finished rounds"
+                  description="Summarizes finished rounds once they pass the token limit below. The original task and the recent tail stay in the request."
+                  value={compactStaleHistory}
+                  disabled={!autoCompactContext}
+                  onChange={(value) =>
+                    handleUpdate({ compactStaleHistory: value })
+                  }
+                />
+                <UserSetting
+                  type="number"
+                  title="Finished-round limit"
+                  description="Tokens of finished rounds, beyond the original task and the recent tail, that start a summary. Default is 30,000."
+                  value={finishedRoundLimit}
+                  min={1000}
+                  max={2_000_000}
+                  disabled={!autoCompactContext || !compactStaleHistory}
+                  onChange={(value) => {
+                    if (!Number.isFinite(value)) {
+                      return;
+                    }
+                    handleUpdate({ staleHistoryTokenLimit: value });
+                  }}
+                />
+                <UserSetting
+                  type="number"
+                  title="File read limit"
+                  description="Maximum tokens placed in context from one file read. A larger file returns the first window and the next line range. Never exceeds half the model context."
+                  value={readFileMaxTokens}
+                  min={1000}
+                  max={2_000_000}
+                  onChange={(value) => {
+                    if (!Number.isFinite(value)) {
+                      return;
+                    }
+                    handleUpdate({ readFileMaxTokens: value });
+                  }}
                 />
                 <UserSetting
                   type="toggle"

@@ -10,6 +10,7 @@ import {
   getShortestUniqueRelativeUriPaths,
   getUriPathBasename,
 } from "../../util/uri.js";
+import { expandWorkspaceMention } from "../expandWorkspaceMention";
 import { BaseContextProvider } from "../index.js";
 import { retrieveContextItemsFromEmbeddings } from "../retrieval/retrieval.js";
 
@@ -19,13 +20,16 @@ class FolderContextProvider extends BaseContextProvider {
     displayTitle: "Folder",
     description: "Type to search",
     type: "submenu",
-    dependsOnIndexing: ["embeddings", "fullTextSearch", "chunk"],
   };
 
   async getContextItems(
     query: string,
     extras: ContextProviderExtras,
   ): Promise<ContextItem[]> {
+    const expanded = await expandWorkspaceMention(extras.ide, query.trim());
+    if (expanded.length > 0) {
+      return expanded;
+    }
     return retrieveContextItemsFromEmbeddings(extras, this.options, query);
   }
   async loadSubmenuItems(

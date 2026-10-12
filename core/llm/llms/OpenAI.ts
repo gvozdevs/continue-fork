@@ -342,7 +342,7 @@ class OpenAI extends BaseLLM {
       temperature: options.temperature ?? null,
       top_p: options.topP ?? null,
       reasoning: {
-        effort: "medium",
+        effort: options.reasoningEffort ?? "medium",
         summary: "auto",
       },
       include: ["reasoning.encrypted_content"],

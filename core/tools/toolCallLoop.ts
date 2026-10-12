@@ -1,15 +1,14 @@
+import { readTargetsFromArgs } from "./definitions/readFile";
+
 export const TOOL_LOOP_SOFT_THRESHOLD = 3;
 export const TOOL_LOOP_HARD_THRESHOLD = 5;
-export const FILE_REREAD_THRESHOLD = 3;
 export const FILE_CYCLE_WINDOW = 6;
 export const TEXT_REPEAT_THRESHOLD = 3;
+export const STREAM_PHRASE_ABORT_THRESHOLD = 5;
 export const PHRASE_CYCLE_MAX = 10;
 
 export const TOOL_LOOP_WARNING =
   "LOOP_DETECTED: This exact tool call was already executed with the same arguments and the result did not change. Do not call it again. Use a different tool or different arguments, or finish with the information you already have.";
-
-export const FILE_REREAD_WARNING =
-  "LOOP_DETECTED: This file was already read and has not been successfully changed since. Do not read it again. Apply the change or finish with the information you already have.";
 
 export const TOOL_LOOP_STOP =
   "Stopped: the same tool call was repeated with the same arguments. The turn ended so the model is not asked to retry it.";
@@ -23,7 +22,7 @@ export const TEXT_LOOP_STOP =
 export const INTENT_LOOP_STOP =
   "Stopped: the next step was described without a tool call. The turn ended so the model is not asked to continue it.";
 
-export const INTENT_NARRATION_THRESHOLD = 2;
+export const INTENT_NARRATION_THRESHOLD = 1;
 
 const READ_TOOLS = new Set(["read_file", "read_file_range"]);
 const WRITE_TOOLS = new Set([
@@ -46,8 +45,8 @@ export interface ToolLoopState {
   lastOutput: string | null;
   texts: string[];
   recent: ToolRoundRecord[];
-  readsSinceWrite: Record<string, number>;
   fileOutput: Record<string, string>;
+  phraseNudgeSent: boolean;
 }
 
 export const EMPTY_TOOL_LOOP: ToolLoopState = {
@@ -56,8 +55,8 @@ export const EMPTY_TOOL_LOOP: ToolLoopState = {
   lastOutput: null,
   texts: [],
   recent: [],
-  readsSinceWrite: {},
   fileOutput: {},
+  phraseNudgeSent: false,
 };
 
 export interface AgentProgress {
@@ -114,10 +113,20 @@ export function noteToolBatchOutcome(
 ): ToolLoopState {
   let next = state;
   if (outcome.ok) {
+    // A finished tool call earns another nudge if the next reply only narrates.
     if (state.lastOutput !== null && state.lastOutput !== outcome.output) {
-      next = { ...state, consecutive: 1, lastOutput: outcome.output };
+      next = {
+        ...state,
+        phraseNudgeSent: false,
+        consecutive: 1,
+        lastOutput: outcome.output,
+      };
     } else {
-      next = { ...state, lastOutput: outcome.output };
+      next = {
+        ...state,
+        phraseNudgeSent: false,
+        lastOutput: outcome.output,
+      };
     }
   }
   if (next.recent.length === 0) {
@@ -130,21 +139,19 @@ export function noteToolBatchOutcome(
     recent[recent.length - 1] = last;
     return { ...next, recent };
   }
-  const prior = last.writes.map((file) => next.fileOutput[file] ?? "").join("\n---\n");
+  const prior = last.writes
+    .map((file) => next.fileOutput[file] ?? "")
+    .join("\n---\n");
   const changed = outcome.ok && (prior === "" || prior !== outcome.output);
   const fileOutput = { ...next.fileOutput };
-  const readsSinceWrite = { ...next.readsSinceWrite };
   if (outcome.ok) {
     for (const file of last.writes) {
       fileOutput[file] = outcome.output;
-      if (changed) {
-        readsSinceWrite[file] = 0;
-      }
     }
   }
   last.changed = changed;
   recent[recent.length - 1] = last;
-  return { ...next, recent, fileOutput, readsSinceWrite };
+  return { ...next, recent, fileOutput };
 }
 
 function parseToolArgs(args: string): Record<string, unknown> | undefined {
@@ -227,16 +234,22 @@ export function assistantSentences(text: string): string[] {
     .filter((part) => part.length >= 8);
 }
 
-const INTENT_SENTENCE = /^(?:let me (?!know\b)|i'll |i will |давайте |давай )/;
+const INTENT_SENTENCE =
+  /^(?:now\s+)?(?:let me (?!know\b)|i'll |i will |давайте |давай )/;
+const STALL_SENTENCE =
+  /extremely large|enormous scope|complex task|comprehensive understanding|let me continue reading|let me read the remaining|remaining section|задача огромн|очень больш|огромн/;
 
 export function isIntentNarration(text: string): boolean {
-  let count = 0;
+  let intentCount = 0;
   for (const sentence of assistantSentences(text)) {
+    if (STALL_SENTENCE.test(sentence)) {
+      return true;
+    }
     if (!INTENT_SENTENCE.test(sentence)) {
       continue;
     }
-    count += 1;
-    if (count >= INTENT_NARRATION_THRESHOLD) {
+    intentCount += 1;
+    if (intentCount >= INTENT_NARRATION_THRESHOLD) {
       return true;
     }
   }
@@ -271,10 +284,13 @@ export function currentReplyWithoutTools(
   return parts.join("\n");
 }
 
-export function isRepeatedPhrase(text: string): boolean {
+export function isRepeatedPhrase(
+  text: string,
+  threshold: number = TEXT_REPEAT_THRESHOLD,
+): boolean {
   const sentences = assistantSentences(text);
   for (let size = 1; size <= PHRASE_CYCLE_MAX; size++) {
-    const need = size * TEXT_REPEAT_THRESHOLD;
+    const need = size * threshold;
     if (sentences.length < need) {
       continue;
     }
@@ -286,13 +302,40 @@ export function isRepeatedPhrase(text: string): boolean {
   }
   const counts = new Map<string, number>();
   for (const sentence of sentences) {
-    const count = (counts.get(sentence) ?? 0) + 1;
-    if (count >= TEXT_REPEAT_THRESHOLD) {
+    const key = sentence;
+    const count = (counts.get(key) ?? 0) + 1;
+    if (count >= threshold) {
       return true;
     }
-    counts.set(sentence, count);
+    counts.set(key, count);
   }
   return false;
+}
+
+export function shouldNudgeForMissingToolCall(text: string): boolean {
+  return isRepeatedPhrase(text) || isIntentNarration(text);
+}
+
+export function shouldAbortStreamingPhraseLoop(
+  history: {
+    message: { role: string; content: unknown };
+    reasoning?: { text?: string };
+    toolCallStates?: unknown[];
+  }[],
+): boolean {
+  const last = history[history.length - 1];
+  if (!last || last.toolCallStates?.length) {
+    return false;
+  }
+  const role = last.message.role;
+  if (role !== "assistant" && role !== "thinking") {
+    return false;
+  }
+  const text = currentReplyWithoutTools(history);
+  if (!text.trim()) {
+    return false;
+  }
+  return isRepeatedPhrase(text, STREAM_PHRASE_ABORT_THRESHOLD);
 }
 
 function classifyRound(
@@ -300,20 +343,33 @@ function classifyRound(
 ): ToolRoundRecord {
   const reads: string[] = [];
   const writes: string[] = [];
+  const files: string[] = [];
   for (const call of calls) {
-    const filepaths = filePathsFromToolArg(
-      parseToolArgs(call.arguments)?.filepath,
-    );
+    const args = parseToolArgs(call.arguments);
+    if (READ_TOOLS.has(call.name)) {
+      const targets = readTargetsFromArgs(args ?? {});
+      for (const target of targets) {
+        const filepath = normalizeFilePath(target.path);
+        if (!filepath) {
+          continue;
+        }
+        files.push(filepath);
+        reads.push(
+          `${filepath}#${target.start_line ?? ""}#${target.end_line ?? ""}`,
+        );
+      }
+      continue;
+    }
+    const filepaths = filePathsFromToolArg(args?.filepath);
     for (const filepath of filepaths) {
-      if (READ_TOOLS.has(call.name)) {
-        reads.push(filepath);
-      } else if (WRITE_TOOLS.has(call.name)) {
+      files.push(filepath);
+      if (WRITE_TOOLS.has(call.name)) {
         writes.push(filepath);
       }
     }
   }
   return {
-    files: [...new Set([...reads, ...writes])],
+    files: [...new Set(files)],
     reads,
     writes,
     changed: null,
@@ -365,25 +421,10 @@ export function noteAgentProgress(
     return { state: next, action: "stop", notice: TOOL_CYCLE_STOP };
   }
 
-  const readsSinceWrite = { ...next.readsSinceWrite };
-  for (const file of classified.reads) {
-    if (!classified.writes.includes(file)) {
-      readsSinceWrite[file] = (readsSinceWrite[file] ?? 0) + 1;
-    }
-  }
   next = {
     ...next,
-    readsSinceWrite,
     recent: [...next.recent, classified].slice(-FILE_CYCLE_WINDOW),
   };
-  const reread = classified.reads.some(
-    (file) =>
-      !classified.writes.includes(file) &&
-      (readsSinceWrite[file] ?? 0) >= FILE_REREAD_THRESHOLD,
-  );
-  if (reread) {
-    return { state: next, action: "warn", notice: FILE_REREAD_WARNING };
-  }
   if (identical.action === "warn") {
     return { state: next, action: "warn", notice: TOOL_LOOP_WARNING };
   }

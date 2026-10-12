@@ -21,7 +21,7 @@ export const lsTool: Tool = {
   function: {
     name: BuiltInToolNames.LSTool,
     description:
-      "List one directory when a file path is not yet known. If the path is already known, use read_file.",
+      "List one directory when a file path is not yet known. Prefer this over listing a directory with the shell. If the path is already known, use read_file.",
     parameters: {
       type: "object",
       properties: {

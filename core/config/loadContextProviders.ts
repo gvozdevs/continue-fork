@@ -8,6 +8,7 @@ import CurrentFileContextProvider from "../context/providers/CurrentFileContextP
 import DiffContextProvider from "../context/providers/DiffContextProvider";
 import DocsContextProvider from "../context/providers/DocsContextProvider";
 import FileContextProvider from "../context/providers/FileContextProvider";
+import FolderContextProvider from "../context/providers/FolderContextProvider";
 import ProblemsContextProvider from "../context/providers/ProblemsContextProvider";
 import RulesContextProvider from "../context/providers/RulesContextProvider";
 import TerminalContextProvider from "../context/providers/TerminalContextProvider";
@@ -32,6 +33,7 @@ export function loadConfigContextProviders(
 
   const defaultProviders: IContextProvider[] = [
     new FileContextProvider({}),
+    new FolderContextProvider({}),
     new CurrentFileContextProvider({}),
     new DiffContextProvider({}),
     new TerminalContextProvider({}),

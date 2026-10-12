@@ -234,6 +234,11 @@ export function toChatBody(
     tool_choice: options.toolChoice,
   };
 
+  if (options.reasoningEffort) {
+    (params as ChatCompletionCreateParams & { reasoning_effort?: string }).reasoning_effort =
+      options.reasoningEffort;
+  }
+
   if (options.tools?.length) {
     params.tools = options.tools
       .filter((tool) => !tool.type || tool.type === "function")

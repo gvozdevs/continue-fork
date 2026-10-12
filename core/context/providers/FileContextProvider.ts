@@ -6,7 +6,7 @@ import {
   ContextSubmenuItem,
   LoadSubmenuItemsArgs,
 } from "../../";
-import { isSecurityConcern } from "../../indexing/ignore";
+import { expandWorkspaceMention } from "../expandWorkspaceMention";
 import { walkDirs } from "../../indexing/walkDir";
 import {
   getShortestUniqueRelativeUriPaths,
@@ -28,7 +28,11 @@ class FileContextProvider extends BaseContextProvider {
     query: string,
     extras: ContextProviderExtras,
   ): Promise<ContextItem[]> {
-    // Assume the query is a filepath
+    const expanded = await expandWorkspaceMention(extras.ide, query.trim());
+    if (expanded.length > 0) {
+      return expanded;
+    }
+
     const fileUri = query.trim();
     const content = await extras.ide.readFile(fileUri);
 

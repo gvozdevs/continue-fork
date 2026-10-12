@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { EditOperation } from "../../tools/definitions/multiEdit";
+import {
+  EditOperation,
+  schemaArgsForMultiEdit,
+} from "../../tools/definitions/multiEdit";
 import { ContinueErrorReason } from "../../util/errors";
 import { validateMultiEdit } from "./multiEditValidation";
 import { executeMultiFindAndReplace } from "./performReplace";
@@ -36,6 +39,16 @@ describe("multiEdit shared validation", () => {
       ];
       const result = validateMultiEdit({ edits });
       expect(result.edits).toEqual(edits);
+    });
+
+    it("accepts old_text and new_text as aliases", () => {
+      const result = validateMultiEdit(
+        schemaArgsForMultiEdit({
+          edits: [{ old_text: "hello", new_text: "world" }],
+        }),
+      );
+      expect(result.edits[0].old_string).toBe("hello");
+      expect(result.edits[0].new_string).toBe("world");
     });
   });
 

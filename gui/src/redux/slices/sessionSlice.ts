@@ -427,6 +427,7 @@ export const sessionSlice = createSlice({
           content: action.payload,
         },
         contextItems: [],
+        hidden: true,
       });
       state.history.push({
         message: {
@@ -437,6 +438,38 @@ export const sessionSlice = createSlice({
         contextItems: [],
       });
       state.isStreaming = true;
+    },
+    clearStalledAssistantReply: (state) => {
+      let index = state.history.length - 1;
+      while (
+        index >= 0 &&
+        state.history[index].message.role === "thinking"
+      ) {
+        index -= 1;
+      }
+      const assistant = state.history[index];
+      if (!assistant || assistant.message.role !== "assistant") {
+        return;
+      }
+      if (
+        assistant.toolCallStates?.length ||
+        assistant.message.toolCalls?.length
+      ) {
+        return;
+      }
+      if (typeof assistant.message.content === "string") {
+        assistant.message.content = "";
+      }
+      assistant.reasoning = undefined;
+      for (let i = index + 1; i < state.history.length; i++) {
+        const thinking = state.history[i];
+        if (
+          thinking.message.role === "thinking" &&
+          typeof thinking.message.content === "string"
+        ) {
+          thinking.message.content = "";
+        }
+      }
     },
     truncateHistoryToMessage: (
       state,
@@ -1114,6 +1147,7 @@ export const {
   setActive,
   submitEditorAndInitAtIndex,
   appendLoopResume,
+  clearStalledAssistantReply,
   truncateHistoryToMessage,
   updateHistoryItemAtIndex,
   clearDanglingMessages,

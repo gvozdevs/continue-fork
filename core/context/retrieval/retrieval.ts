@@ -96,35 +96,41 @@ export async function retrieveContextItemsFromEmbeddings(
     return [];
   }
 
+  const items = results
+    .sort((a, b) => a.filepath.localeCompare(b.filepath))
+    .map((r) => {
+      const { relativePathOrBasename, last2Parts, baseName } =
+        getUriDescription(r.filepath, workspaceDirs);
+
+      if (baseName === "package.json") {
+        console.warn("Retrieval pipeline: package.json detected");
+      }
+
+      return {
+        // Don't show line numbers for tool calls where startLine = -1
+        name:
+          r.startLine === -1
+            ? baseName
+            : `${baseName} (${r.startLine + 1}-${r.endLine + 1})`,
+        description: last2Parts,
+        content: `\`\`\`${relativePathOrBasename}\n${r.content}\n\`\`\``,
+        uri: {
+          type: "file" as const,
+          value: r.filepath,
+        },
+      };
+    });
+
+  if (extras.isInAgentMode) {
+    return items;
+  }
+
   return [
     {
       ...INSTRUCTIONS_BASE_ITEM,
       content:
         "Use the above code to answer the following question. You should not reference any files outside of what is shown, unless they are commonly known files, like a .gitignore or package.json. Reference the filenames whenever possible. If there isn't enough information to answer the question, suggest where the user might look to learn more.",
     },
-    ...results
-      .sort((a, b) => a.filepath.localeCompare(b.filepath))
-      .map((r) => {
-        const { relativePathOrBasename, last2Parts, baseName } =
-          getUriDescription(r.filepath, workspaceDirs);
-
-        if (baseName === "package.json") {
-          console.warn("Retrieval pipeline: package.json detected");
-        }
-
-        return {
-          // Don't show line numbers for tool calls where startLine = -1
-          name:
-            r.startLine === -1
-              ? baseName
-              : `${baseName} (${r.startLine + 1}-${r.endLine + 1})`,
-          description: last2Parts,
-          content: `\`\`\`${relativePathOrBasename}\n${r.content}\n\`\`\``,
-          uri: {
-            type: "file" as const,
-            value: r.filepath,
-          },
-        };
-      }),
+    ...items,
   ];
 }

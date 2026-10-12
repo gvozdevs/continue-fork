@@ -95,7 +95,7 @@ export function executeFindAndReplace(
   if (matches.length === 0) {
     throw new ContinueError(
       ContinueErrorReason.FindAndReplaceOldStringNotFound,
-      `Edit at index ${editIndex}: string not found in file: "${oldString}"`,
+      `Edit at index ${editIndex}: string not found in file: "${oldString}". Call read_file on this file, then call again with a shorter old_string copied from the read result: a few lines that occur once.`,
     );
   }
 

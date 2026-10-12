@@ -262,7 +262,7 @@ export function Chat() {
     (index: number): boolean => {
       return !history
         .slice(index + 1)
-        .some((entry) => entry.message.role === "user");
+        .some((entry) => entry.message.role === "user" && !entry.hidden);
     },
     [history],
   );
@@ -288,6 +288,13 @@ export function Chat() {
         latestSummaryIndex !== -1 && index < latestSummaryIndex;
 
       if (message.role === "user") {
+        if (item.hidden) {
+          return (
+            <div className="text-description px-2 py-1 text-xs italic">
+              Asked the model to call a tool instead of describing the step.
+            </div>
+          );
+        }
         return (
           <ContinueInputBox
             onEnter={(editorState, modifiers) =>

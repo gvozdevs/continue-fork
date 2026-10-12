@@ -13,7 +13,7 @@ export const globSearchTool: Tool = {
   function: {
     name: BuiltInToolNames.FileGlobSearch,
     description:
-      "Find files by glob when the path is not yet known. If the path is already known, use read_file. Supports **. Skips many build, cache, and secrets paths. Output may be truncated; use a targeted pattern.",
+      "Find files by glob when the path is not yet known. Prefer this over listing a directory with the shell. If the path is already known, use read_file. Supports **. Skips many build, cache, and secrets paths. Output may be truncated; use a targeted pattern.",
     parameters: {
       type: "object",
       required: ["pattern"],

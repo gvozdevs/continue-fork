@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   fromChatCompletionChunk,
   fromChatResponse,
+  toChatBody,
 } from "./openaiTypeConverters";
 
 describe("reasoning_content", () => {
@@ -189,5 +190,27 @@ describe("reasoning_content", () => {
     } as any)).toEqual([
       expect.objectContaining({ role: "thinking", content: reasoning }),
     ]);
+  });
+});
+
+describe("reasoning_effort", () => {
+  it("adds reasoning_effort to the chat body when set", () => {
+    const body = toChatBody(
+      [{ role: "user", content: "hi" }],
+      { model: "DeepSeek-V4-Flash-0731", reasoningEffort: "high" } as any,
+    );
+    expect((body as { reasoning_effort?: string }).reasoning_effort).toBe(
+      "high",
+    );
+  });
+
+  it("omits reasoning_effort when it is not set", () => {
+    const body = toChatBody(
+      [{ role: "user", content: "hi" }],
+      { model: "DeepSeek-V4-Flash-0731" } as any,
+    );
+    expect(
+      (body as { reasoning_effort?: string }).reasoning_effort,
+    ).toBeUndefined();
   });
 });

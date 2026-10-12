@@ -20,6 +20,7 @@ import Ollama from "./llm/llms/Ollama";
 import { EditAggregator } from "./nextEdit/context/aggregateEdits";
 import { createNewPromptFileV2 } from "./promptFiles/createNewPromptFile";
 import { callTool } from "./tools/callTool";
+import { expandWorkspaceMention } from "./context/expandWorkspaceMention";
 import { formatUnknownTool } from "./tools/toolCallValidity";
 import { ChatDescriber } from "./util/chatDescriber";
 import { compactConversation } from "./util/conversationCompaction";
@@ -1458,7 +1459,7 @@ export class Core {
     }
 
     try {
-      const items = await provider.getContextItems(query, {
+      let items = await provider.getContextItems(query, {
         config,
         llm,
         embeddingsProvider: config.selectedModelByRole.embed,
@@ -1472,6 +1473,14 @@ export class Core {
           fetchwithRequestOptions(url, init, config.requestOptions),
         isInAgentMode: msg.data.isInAgentMode,
       });
+
+      if (
+        items.length === 0 &&
+        query &&
+        !/^https?:\/\//i.test(query)
+      ) {
+        items = await expandWorkspaceMention(this.ide, query);
+      }
 
       return items.map((item) => {
         const id: ContextItemId = {

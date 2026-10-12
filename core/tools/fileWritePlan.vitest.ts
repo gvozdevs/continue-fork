@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import { ContinueError, ContinueErrorReason } from "../util/errors";
 import { prepareMultiEdit } from "./definitions/multiEdit";
 import { prepareSingleFind } from "./definitions/singleFindAndReplace";
+import { EDIT_ARG_CHAR_LIMIT } from "./fileWritePlan";
 
 function ide(files: Record<string, string>) {
   return {
@@ -49,6 +50,49 @@ test("contents is rejected when the file already exists", async () => {
     expect(error).toBeInstanceOf(ContinueError);
     expect((error as ContinueError).reason).toBe(
       ContinueErrorReason.FileAlreadyExists,
+    );
+    expect((error as ContinueError).message).toContain("old_string");
+    expect((error as ContinueError).message).toContain(
+      "Do not resend this call with contents",
+    );
+  }
+});
+
+test("contents and replacements longer than 6000 characters are rejected before a write", async () => {
+  const tooLong = "x".repeat(EDIT_ARG_CHAR_LIMIT + 1);
+  try {
+    await prepareSingleFind(
+      { filepath: "dto.go", contents: tooLong },
+      ide({}),
+    );
+    throw new Error("expected long contents to be rejected");
+  } catch (error) {
+    expect((error as ContinueError).reason).toBe(
+      ContinueErrorReason.InvalidToolArgs,
+    );
+    expect((error as ContinueError).message).toContain(
+      String(EDIT_ARG_CHAR_LIMIT),
+    );
+    expect((error as ContinueError).message).toContain("smaller tool calls");
+  }
+
+  const created = await prepareSingleFind(
+    { filepath: "dto.go", contents: "package dto\n" },
+    ide({}),
+  );
+  const existing = ide({ [created.fileUri]: "package dto\n" });
+  try {
+    await prepareSingleFind(
+      {
+        filepath: "dto.go",
+        replacements: [{ old_string: "package dto", new_string: tooLong }],
+      },
+      existing,
+    );
+    throw new Error("expected a long replacement to be rejected");
+  } catch (error) {
+    expect((error as ContinueError).reason).toBe(
+      ContinueErrorReason.InvalidToolArgs,
     );
   }
 });

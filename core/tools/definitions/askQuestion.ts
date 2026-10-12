@@ -11,10 +11,13 @@ export const askQuestionTool: Tool = {
   group: BUILT_IN_GROUP_NAME,
   function: {
     name: BuiltInToolNames.AskQuestion,
-    description: `Ask the user a clarifying question to gather requirements, preferences, or implementation details before proceeding.
+    description: `Ask the user one question only when the files and tool results you already have cannot settle a contract choice.
 Guidelines:
-- You should use this tool whenever you want to clarify your assumption or need answers to build your plan.
-- DO NOT supply "other" or "none of the above" or similar as an option. The user can always provide a free-form answer when needed.`,
+- First check the codebase with read_file or grep_search. Ask only when that does not answer it.
+- Do not ask for permission to start work the user already requested. Do not ask whether to implement the whole task.
+- Ask one question per call. Pass two or more options when there are real choices, or an empty options array for a free-form answer.
+- DO NOT supply "other" or "none of the above" or similar as an option. The user can always type a free-form answer.
+- Do not repeat the question in the reply text; the tool shows it.`,
     parameters: {
       type: "object",
       required: ["question", "options"],

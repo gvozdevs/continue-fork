@@ -1,15 +1,17 @@
 import { ILLM } from "../..";
 import { countTokensAsync } from "../../llm/countTokens";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
+import { readFileTokenLimit } from "../readFileMaxTokens";
 
 export async function throwIfFileExceedsHalfOfContext(
   filepath: string,
   content: string,
   model: ILLM | null,
+  configuredMaxTokens?: number,
 ) {
-  if (model) {
+  const tokenLimit = readFileTokenLimit(model, configuredMaxTokens);
+  if (model && tokenLimit !== undefined) {
     const tokens = await countTokensAsync(content, model.title);
-    const tokenLimit = model.contextLength / 2;
     if (tokens > tokenLimit) {
       throw new ContinueError(
         ContinueErrorReason.FileTooLarge,

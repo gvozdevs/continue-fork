@@ -33,7 +33,10 @@ export const sharedConfigSchema = z
     showChatScrollbar: z.boolean(),
     continueAfterToolRejection: z.boolean(),
     autoCompactContext: z.boolean(),
+    compactStaleHistory: z.boolean(),
+    staleHistoryTokenLimit: z.number().min(0).max(2_000_000),
     logLlmTraffic: z.boolean(),
+    readFileMaxTokens: z.number().min(0).max(2_000_000),
 
     // `tabAutocompleteOptions` in `ContinueConfig`
     useAutocompleteCache: z.boolean(),
@@ -163,8 +166,17 @@ export function modifyAnyConfigWithSharedConfig<
   if (sharedConfig.autoCompactContext !== undefined) {
     configCopy.ui.autoCompactContext = sharedConfig.autoCompactContext;
   }
+  if (sharedConfig.compactStaleHistory !== undefined) {
+    configCopy.ui.compactStaleHistory = sharedConfig.compactStaleHistory;
+  }
+  if (sharedConfig.staleHistoryTokenLimit !== undefined) {
+    configCopy.ui.staleHistoryTokenLimit = sharedConfig.staleHistoryTokenLimit;
+  }
   if (sharedConfig.logLlmTraffic !== undefined) {
     configCopy.ui.logLlmTraffic = sharedConfig.logLlmTraffic;
+  }
+  if (sharedConfig.readFileMaxTokens !== undefined) {
+    configCopy.ui.readFileMaxTokens = sharedConfig.readFileMaxTokens;
   }
 
   configCopy.experimental = {

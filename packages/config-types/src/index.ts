@@ -16,6 +16,9 @@ export const completionOptionsSchema = z.object({
   numGpu: z.number().optional(),
   raw: z.boolean().optional(),
   stream: z.boolean().optional(),
+  reasoning: z.boolean().optional(),
+  reasoningBudgetTokens: z.number().optional(),
+  reasoningEffort: z.enum(["low", "medium", "high", "minimal"]).optional(),
 });
 export type CompletionOptions = z.infer<typeof completionOptionsSchema>;
 

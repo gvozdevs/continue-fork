@@ -1,9 +1,13 @@
-import { GetTool } from "../..";
+import { GetTool, Tool } from "../..";
 import { loadMarkdownSkills } from "../../config/markdown/loadMarkdownSkills";
 import { BUILT_IN_GROUP_NAME, BuiltInToolNames } from "../builtIn";
 
-export const readSkillTool: GetTool = async (params) => {
-  const { skills } = await loadMarkdownSkills(params.ide);
+export interface SkillSummary {
+  name: string;
+  description: string;
+}
+
+export function buildReadSkillTool(skills: SkillSummary[]): Tool {
   return {
     type: "function",
     displayTitle: "Read Skill",
@@ -32,4 +36,21 @@ ${skills.map((skill) => `\nname: ${skill.name}\ndescription: ${skill.description
       },
     },
   };
-};
+}
+
+export async function loadSkillSummaries(
+  ide: Parameters<typeof loadMarkdownSkills>[0],
+): Promise<SkillSummary[]> {
+  try {
+    const { skills } = await loadMarkdownSkills(ide);
+    return skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export const readSkillTool: GetTool = async (params) =>
+  buildReadSkillTool(await loadSkillSummaries(params.ide));

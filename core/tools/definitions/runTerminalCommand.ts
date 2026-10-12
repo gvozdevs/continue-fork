@@ -26,10 +26,10 @@ function getPreferredShell(): string {
 const PLATFORM_INFO = `Choose terminal commands and scripts optimized for ${os.platform()} and ${os.arch()} and shell ${getPreferredShell()}.`;
 
 const RUN_COMMAND_NOTES = `The shell is not stateful and will not remember any previous commands.\
-      When a command is run in the background ALWAYS suggest using shell commands to stop it; NEVER suggest using Ctrl+C.\
-      When suggesting subsequent shell commands ALWAYS format them in shell command blocks.\
+      Put the command in this call; do not write it in the reply.\
       Do NOT perform actions requiring special/admin privileges.\
-      IMPORTANT: To edit files, use the edit tools instead of shell commands (sed, awk, etc). Use this tool to list a directory, check git status, or show a git diff.\
+      IMPORTANT: To create or edit files, use the file tool instead of shell commands (sed, awk, echo, etc). Use ls or file_glob_search to list a directory. Use this tool to check git status, show a git diff, build, or run tests.\
+      Long output is cut to its last part, so pass filters such as a grep or a line limit when only a summary is needed.\
       ${PLATFORM_INFO}`;
 
 export const runTerminalCommandTool: Tool = {
@@ -45,12 +45,17 @@ export const runTerminalCommandTool: Tool = {
     description: `Run a terminal command in the current directory.\n${RUN_COMMAND_NOTES}`,
     parameters: {
       type: "object",
-      required: ["command"],
       properties: {
         command: {
           type: "string",
           description:
             "The command to run. This will be passed directly into the IDE shell.",
+        },
+        commands: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Several commands to run in this one call, in order, in the same shell.",
         },
       },
     },
@@ -60,10 +65,13 @@ export const runTerminalCommandTool: Tool = {
     basePolicy: ToolPolicy,
     parsedArgs: Record<string, unknown>,
   ): ToolPolicy => {
-    return evaluateTerminalCommandSecurity(
-      basePolicy,
-      parsedArgs.command as string,
-    );
+    const command =
+      typeof parsedArgs.command === "string"
+        ? parsedArgs.command
+        : Array.isArray(parsedArgs.commands)
+          ? parsedArgs.commands.filter((item) => typeof item === "string").join("; ")
+          : "";
+    return evaluateTerminalCommandSecurity(basePolicy, command);
   },
   systemMessageDescription: {
     prefix: `To run a terminal command, use the ${BuiltInToolNames.RunTerminalCommand} tool

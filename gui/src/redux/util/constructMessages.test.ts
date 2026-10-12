@@ -1063,4 +1063,88 @@ describe("constructMessages", () => {
       );
     });
   });
+
+  test("keeps separate file reads and drops a repeated range", () => {
+    const body = "line\n".repeat(40);
+    const paths = [
+      { filepath: "a.go" },
+      { filepath: "docs/fr2.md", start_line: 1, end_line: 200 },
+      { filepath: "docs/fr2.md", start_line: 200, end_line: 400 },
+      { filepath: "docs/fr2.md", start_line: 1, end_line: 200 },
+    ];
+    mockHistory = paths.map((args, index) => {
+      const toolCall: ToolCall = {
+        id: `read-${index}`,
+        type: "function",
+        function: {
+          name: BuiltInToolNames.ReadFile,
+          arguments: JSON.stringify(args),
+        },
+      };
+      return {
+        message: {
+          role: "assistant",
+          content: "read",
+          toolCalls: [toolCall],
+        } as AssistantChatMessage,
+        contextItems: [],
+        toolCallStates: [
+          {
+            toolCall,
+            parsedArgs: args,
+            status: "done" as const,
+            toolCallId: toolCall.id,
+            output: [createContextItem(args.filepath, `${body}-${index}`)],
+          },
+        ],
+      };
+    });
+
+    const { messages } = constructMessages(
+      mockHistory,
+      "Base System Message",
+      mockRules,
+      {},
+    );
+    const toolMessages = messages.filter((message) => message.role === "tool");
+    expect(toolMessages).toHaveLength(4);
+    expect(toolMessages[0].content).toBe(`${body}-0`);
+    expect(toolMessages[1].content).toContain("outdated");
+    expect(toolMessages[2].content).toBe(`${body}-2`);
+    expect(toolMessages[3].content).toBe(`${body}-3`);
+  });
+
+  test("keeps the original task message after a later summary", () => {
+    mockHistory = [
+      {
+        message: { role: "user", content: "SPEC from docs" } as UserChatMessage,
+        contextItems: [],
+      },
+      {
+        message: { role: "assistant", content: "old step" } as AssistantChatMessage,
+        contextItems: [],
+        conversationSummary: "Summary of finished steps",
+      },
+      {
+        message: { role: "user", content: "continue" } as UserChatMessage,
+        contextItems: [],
+      },
+    ];
+
+    const { messages } = constructMessages(
+      mockHistory,
+      "Base System Message",
+      mockRules,
+      {},
+    );
+    const system = messages.find((message) => message.role === "system");
+    const users = messages.filter((message) => message.role === "user");
+    expect(typeof system?.content === "string" ? system.content : "").toContain(
+      "Summary of finished steps",
+    );
+    expect(users.map((message) => renderChatMessage(message))).toEqual([
+      "SPEC from docs",
+      "continue",
+    ]);
+  });
 });

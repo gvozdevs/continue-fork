@@ -9,6 +9,7 @@ import {
   LoadSubmenuItemsArgs,
 } from "../..";
 import DocsService from "../../indexing/docs/DocsService";
+import { expandWorkspaceMention } from "../expandWorkspaceMention";
 
 import { INSTRUCTIONS_BASE_ITEM } from "./utils";
 
@@ -98,6 +99,9 @@ class DocsContextProvider extends BaseContextProvider {
       nRetrieve,
     );
     if (!chunks?.length) {
+      if (query && !/^https?:\/\//i.test(query)) {
+        return expandWorkspaceMention(extras.ide, query);
+      }
       return [];
     }
 
@@ -135,14 +139,18 @@ class DocsContextProvider extends BaseContextProvider {
           },
         }))
         .reverse(),
-      {
-        ...INSTRUCTIONS_BASE_ITEM,
-        content:
-          "Use the above documentation to answer the following question. You should not reference " +
-          "anything outside of what is shown, unless it is a commonly known concept. Reference URLs " +
-          "whenever possible using markdown formatting. If there isn't enough information to answer " +
-          "the question, suggest where the user might look to learn more.",
-      },
+      ...(extras.isInAgentMode
+        ? []
+        : [
+            {
+              ...INSTRUCTIONS_BASE_ITEM,
+              content:
+                "Use the above documentation to answer the following question. You should not reference " +
+                "anything outside of what is shown, unless it is a commonly known concept. Reference URLs " +
+                "whenever possible using markdown formatting. If there isn't enough information to answer " +
+                "the question, suggest where the user might look to learn more.",
+            },
+          ]),
     ];
   }
 

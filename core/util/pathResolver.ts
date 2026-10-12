@@ -1,6 +1,3 @@
-import { fileURLToPath, pathToFileURL } from "node:url";
-import * as path from "path";
-import untildify from "untildify";
 import { IDE } from "..";
 import { resolveRelativePathInDir } from "./ideUtils";
 import { findUriInDirs } from "./uri";
@@ -15,8 +12,72 @@ export interface ResolvedPath {
 
 const WINDOWS_ABS_PATH = /^[a-zA-Z]:[\\/]/;
 
+function isWindowsRuntime(): boolean {
+  return typeof process !== "undefined" && process.platform === "win32";
+}
+
 function isWindowsPath(fsPath: string): boolean {
   return WINDOWS_ABS_PATH.test(fsPath) || fsPath.startsWith("\\\\");
+}
+
+function useWindowsApi(fsPath: string): boolean {
+  return isWindowsPath(fsPath) || isWindowsRuntime();
+}
+
+function expandTilde(input: string): string {
+  if (!input.startsWith("~")) {
+    return input;
+  }
+  const home =
+    (typeof process !== "undefined" &&
+      (process.env.HOME || process.env.USERPROFILE)) ||
+    "";
+  if (!home) {
+    return input;
+  }
+  if (input === "~") {
+    return home;
+  }
+  if (input.startsWith("~/") || input.startsWith("~\\")) {
+    return home + input.slice(1);
+  }
+  return input;
+}
+
+function fileUrlToFsPath(fileUrl: string): string {
+  const url = new URL(fileUrl);
+  if (url.protocol !== "file:") {
+    throw new TypeError(`Invalid file URL: ${fileUrl}`);
+  }
+  let pathname = decodeURIComponent(url.pathname);
+  if (/^\/[a-zA-Z]:/.test(pathname)) {
+    pathname = pathname.slice(1);
+  }
+  if (isWindowsPath(pathname) || isWindowsRuntime()) {
+    return pathname.replace(/\//g, "\\");
+  }
+  return pathname;
+}
+
+function fsPathToFileUrl(fsPath: string): string {
+  const windows = isWindowsPath(fsPath) || isWindowsRuntime();
+  let normalized = fsPath.replace(/\\/g, "/");
+  if (windows && WINDOWS_ABS_PATH.test(fsPath) && !normalized.startsWith("/")) {
+    normalized = `/${normalized}`;
+  } else if (windows && fsPath.startsWith("\\\\")) {
+    const unc = fsPath.replace(/\\/g, "/").replace(/^\/+/, "");
+    return `file://${unc
+      .split("/")
+      .map((part) => encodeURIComponent(part))
+      .join("/")}`;
+  }
+  const encoded = normalized
+    .split("/")
+    .map((part, index) =>
+      index === 1 && /^[a-zA-Z]:$/.test(part) ? part : encodeURIComponent(part),
+    )
+    .join("/");
+  return `file://${encoded}`;
 }
 
 interface PathApi {
@@ -26,10 +87,65 @@ interface PathApi {
   sep: string;
 }
 
+function normalizeFsPath(fsPath: string, windows: boolean): string {
+  const sep = windows ? "\\" : "/";
+  const isUnc = windows && fsPath.startsWith("\\\\");
+  let value = windows ? fsPath.replace(/\//g, "\\") : fsPath.replace(/\\/g, "/");
+
+  let root = "";
+  if (isUnc) {
+    const uncParts = value.split(/[\\/]/).filter(Boolean);
+    root = `\\\\${uncParts.slice(0, 2).join("\\")}`;
+    value = uncParts.slice(2).join("\\");
+    if (uncParts.length >= 2) {
+      root += "\\";
+    }
+  } else if (windows && WINDOWS_ABS_PATH.test(value)) {
+    root = value.slice(0, 2) + sep;
+    value = value.slice(2).replace(/^[\\/]/, "");
+  } else if (value.startsWith("/") || (windows && value.startsWith("\\"))) {
+    root = sep;
+    value = value.slice(1);
+  }
+
+  const parts: string[] = [];
+  for (const part of value.split(/[\\/]/)) {
+    if (!part || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+
+  return root + parts.join(sep);
+}
+
+function createPathApi(windows: boolean): PathApi {
+  const sep = windows ? "\\" : "/";
+  return {
+    sep,
+    isAbsolute(p: string) {
+      return (
+        WINDOWS_ABS_PATH.test(p) ||
+        p.startsWith("\\\\") ||
+        p.startsWith("/") ||
+        (windows && p.startsWith("\\"))
+      );
+    },
+    normalize(p: string) {
+      return normalizeFsPath(p, windows);
+    },
+    resolve(p: string) {
+      return normalizeFsPath(p, windows);
+    },
+  };
+}
+
 function pathApiFor(fsPath: string): PathApi {
-  return isWindowsPath(fsPath) || process.platform === "win32"
-    ? path.win32
-    : path;
+  return createPathApi(useWindowsApi(fsPath));
 }
 
 /**
@@ -45,12 +161,12 @@ export function normalizeComparableFsPath(input: string): string | null {
   let fsPath: string;
   if (/^file:/i.test(trimmed)) {
     try {
-      fsPath = fileURLToPath(trimmed);
+      fsPath = fileUrlToFsPath(trimmed);
     } catch {
       return null;
     }
   } else {
-    fsPath = untildify(trimmed);
+    fsPath = expandTilde(trimmed);
   }
 
   const pathApi = pathApiFor(fsPath);
@@ -59,7 +175,7 @@ export function normalizeComparableFsPath(input: string): string | null {
   }
 
   const resolved = pathApi.normalize(pathApi.resolve(fsPath));
-  if (isWindowsPath(fsPath) || process.platform === "win32") {
+  if (useWindowsApi(fsPath)) {
     return resolved.toLowerCase();
   }
   return resolved;
@@ -156,7 +272,7 @@ export async function resolveInputPath(
 
   // Handle file:// URIs
   if (trimmedPath.startsWith("file://")) {
-    const displayPath = fileURLToPath(trimmedPath);
+    const displayPath = fileUrlToFsPath(trimmedPath);
     const isWithinWorkspace = await isUriWithinWorkspace(ide, trimmedPath);
     return {
       uri: trimmedPath,
@@ -171,20 +287,16 @@ export async function resolveInputPath(
     };
   }
 
-  // Expand tilde paths (handles ~/ and ~username/)
-  const expandedPath = untildify(trimmedPath);
+  const expandedPath = expandTilde(trimmedPath);
+  const pathApi = pathApiFor(expandedPath);
 
-  // Check if it's an absolute path (including Windows paths)
   const isAbsolute =
-    path.isAbsolute(expandedPath) ||
-    // Windows network paths
+    pathApi.isAbsolute(expandedPath) ||
     expandedPath.startsWith("\\\\") ||
-    // Windows drive letters
     /^[a-zA-Z]:/.test(expandedPath);
 
   if (isAbsolute) {
-    // Convert to file:// URI format
-    const uri = pathToFileURL(expandedPath).href;
+    const uri = fsPathToFileUrl(expandedPath);
     const isWithinWorkspace = await isUriWithinWorkspace(ide, uri);
     return {
       uri,

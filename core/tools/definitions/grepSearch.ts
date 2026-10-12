@@ -20,15 +20,20 @@ export const grepSearchTool: Tool = {
   function: {
     name: BuiltInToolNames.GrepSearch,
     description:
-      "Find a line or an unknown file by regex. If the file path is already known and you need its contents, call read_file instead. Set path only to search inside one file for a line number; the result includes 1-based lines. Omit path to search the workspace. A Cyrillic query is matched as Unicode text. Workspace search skips many build, cache, and secrets paths. Output may be truncated, so use a short query.",
+      "Find a line or an unknown file by regex. If the file path is already known and you need its contents, call read_file instead. Set path only to search inside one file for a line number; the result includes 1-based lines. Omit path to search the workspace. Pass queries as an array to run several searches in one call. A Cyrillic query is matched as Unicode text. Workspace search skips many build, cache, and secrets paths. Output may be truncated, so use a short query.",
     parameters: {
       type: "object",
-      required: ["query"],
       properties: {
         query: {
           type: "string",
           description:
             "The regex pattern to search for. A plain Cyrillic or Latin phrase is fine. Use alternation (e.g., 'word1|word2') to find several words in one search.",
+        },
+        queries: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Several regex patterns to search in this one call. Results are returned in order.",
         },
         path: {
           anyOf: [{ type: "string" }, { type: "null" }],

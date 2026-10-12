@@ -142,11 +142,11 @@ export function formatInvalidArgs(
   violations: string[],
 ): string {
   const lines = violations.map((violation) => `- ${violation}`).join("\n");
-  return `${INVALID_ARGS}: Tool "${toolName}" was not executed because the arguments are invalid:\n${lines}\n\nPlease try something else or request further instructions.`;
+  return `${INVALID_ARGS}: Tool "${toolName}" was not executed because the arguments are invalid:\n${lines}\n\nFix the arguments and call again in this response.`;
 }
 
 export function formatUnknownTool(toolName: string): string {
-  return `${UNKNOWN_TOOL}: Tool "${toolName}" is not available and was not executed.\n\nPlease try something else or request further instructions.`;
+  return `${UNKNOWN_TOOL}: Tool "${toolName}" is not available and was not executed.\n\nUse one of the tools in this request instead.`;
 }
 
 /**

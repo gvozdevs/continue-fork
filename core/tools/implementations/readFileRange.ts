@@ -64,6 +64,7 @@ export const readFileRangeImpl: ToolImpl = async (args, extras) => {
     resolvedPath.displayPath,
     content,
     extras.config.selectedModelByRole.chat,
+    extras.config.ui?.readFileMaxTokens,
   );
 
   const rangeDescription = `${resolvedPath.displayPath} (lines ${startLine}-${endLine})`;

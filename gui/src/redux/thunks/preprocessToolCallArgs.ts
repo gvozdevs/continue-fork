@@ -1,5 +1,6 @@
 import { Tool, ToolCallState } from "core";
 import { BuiltInToolNames } from "core/tools/builtIn";
+import { schemaArgsForMultiEdit } from "core/tools/definitions/multiEdit";
 import { schemaArgsForSingleFind } from "core/tools/definitions/singleFindAndReplace";
 import {
   collectSchemaViolations,
@@ -10,6 +11,7 @@ import {
   UNKNOWN_TOOL,
 } from "core/tools/toolCallValidity";
 import { ContinueErrorReason } from "core/util/errors";
+import { TOOL_RETRY_HINT } from "core/tools/constants";
 
 import { IIdeMessenger } from "../../context/IdeMessenger";
 import {
@@ -48,7 +50,7 @@ function preprocessErrorContent(toolName: string, errorMessage: string): string 
   ) {
     return errorMessage;
   }
-  return `${toolName} failed because the arguments were invalid, with the following message: ${errorMessage}\n\nPlease try something else or request further instructions.`;
+    return `${toolName} failed because the arguments were invalid, with the following message: ${errorMessage}\n\n${TOOL_RETRY_HINT}`;
 }
 
 export async function preprocessToolCalls(
@@ -84,10 +86,14 @@ export async function preprocessToolCalls(
         return;
       }
 
-      const violations = collectSchemaViolations(
+      const schemaArgs =
         toolName === BuiltInToolNames.SingleFindAndReplace
           ? schemaArgsForSingleFind(parsed.args)
-          : parsed.args,
+          : toolName === BuiltInToolNames.MultiEdit
+            ? schemaArgsForMultiEdit(parsed.args)
+            : parsed.args;
+      const violations = collectSchemaViolations(
+        schemaArgs,
         tool.function.parameters,
       );
       if (violations.length > 0) {

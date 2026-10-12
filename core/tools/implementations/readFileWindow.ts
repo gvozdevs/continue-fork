@@ -141,5 +141,5 @@ export function readWindowNotice(
   const windowSize = Math.max(1, endLine - startLine + 1);
   const nextStart = endLine + 1;
   const nextEnd = Math.min(totalLines, endLine + windowSize);
-  return `${range} ${remaining} more lines follow. To read the next part, call read_file in this response with filepath "${displayPath}", start_line ${nextStart}, end_line ${nextEnd}. To find a specific schema or name in the rest of the file, call grep_search with path "${displayPath}" instead. Make the call now; do not describe it.`;
+  return `${range} ${remaining} more lines follow. Prefer grep_search with path "${displayPath}" to find a heading or name in the rest of the file. To read the next window instead, call read_file with files: [{ "path": "${displayPath}", "start_line": ${nextStart}, "end_line": ${nextEnd} }]. Make the call now; do not describe it.`;
 }

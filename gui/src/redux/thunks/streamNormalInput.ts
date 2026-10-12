@@ -10,14 +10,20 @@ import {
 } from "core/tools/toolCallValidity";
 import {
   EMPTY_TOOL_LOOP,
+  PHRASE_LOOP_RESUME,
   TOOL_LOOP_STOP,
+  currentReplyWithoutTools,
   noteAgentProgress,
+  shouldAbortStreamingPhraseLoop,
+  shouldNudgeForMissingToolCall,
 } from "core/tools/toolCallLoop";
 import { selectActiveTools } from "../selectors/selectActiveTools";
 import { selectSelectedChatModel } from "../slices/configSlice";
 import {
   abortStream,
   addPromptCompletionPair,
+  appendLoopResume,
+  clearStalledAssistantReply,
   errorToolCall,
   setActive,
   setAppliedRulesAtIndex,
@@ -34,7 +40,10 @@ import { ThunkApiType } from "../store";
 import { constructMessages } from "../util/constructMessages";
 
 import { modelSupportsNativeTools } from "core/llm/toolSupport";
-import { shouldAutoCompactContext } from "core/util/autoCompact";
+import {
+  shouldAutoCompactContext,
+  staleHistoryTokenLimit,
+} from "core/util/autoCompact";
 import { applyToolOverrides } from "core/tools/applyToolOverrides";
 import { addSystemMessageToolsToSystemMessage } from "core/tools/systemMessageTools/buildToolsSystemMessage";
 import { interceptSystemToolCalls } from "core/tools/systemMessageTools/interceptSystemToolCalls";
@@ -45,7 +54,10 @@ import {
   selectPendingToolCalls,
 } from "../selectors/selectToolCalls";
 import { getBaseSystemMessage } from "../util/getBaseSystemMessage";
-import { autoCompactHistoryIfNeeded } from "./autoCompact";
+import {
+  autoCompactHistoryIfNeeded,
+  staleHistoryTokens,
+} from "./autoCompact";
 import { callToolById } from "./callToolById";
 import { evaluateToolPolicies } from "./evaluateToolPolicies";
 import { preprocessToolCalls } from "./preprocessToolCallArgs";
@@ -78,6 +90,10 @@ function buildReasoningCompletionOptions(
     // Ollama doesn't support limiting reasoning tokens at this point
     reasoningOptions.reasoningBudgetTokens =
       model.completionOptions?.reasoningBudgetTokens ?? 2048;
+  }
+
+  if (hasReasoningEnabled && model.completionOptions?.reasoningEffort) {
+    reasoningOptions.reasoningEffort = model.completionOptions.reasoningEffort;
   }
 
   return reasoningOptions;
@@ -273,36 +289,35 @@ export const streamNormalInput = createAsyncThunk<
     const notEnoughContext =
       precompiledRes.status === "error" &&
       precompiledRes.error.includes("Not enough context");
+    const compiled =
+      precompiledRes.status === "success" ? precompiledRes.content : undefined;
 
-    const autoCompactEnabled =
-      getState().config.config.ui?.autoCompactContext !== false;
+    const ui = getState().config.config.ui;
+    const autoCompactEnabled = ui?.autoCompactContext !== false;
+    const compactStaleHistory = ui?.compactStaleHistory === true;
+    const staleTokenLimit = staleHistoryTokenLimit(ui?.staleHistoryTokenLimit);
+    const staleTokens = staleHistoryTokens(getState().session.history);
     if (
       autoCompactEnabled &&
       shouldAutoCompactContext({
         notEnoughContext,
-        didPrune:
-          precompiledRes.status === "success"
-            ? precompiledRes.content.didPrune
-            : false,
-        contextPercentage:
-          precompiledRes.status === "success"
-            ? precompiledRes.content.contextPercentage
-            : undefined,
+        didPrune: compiled?.didPrune,
+        contextPercentage: compiled?.contextPercentage,
+        staleTokens,
+        compactStaleHistory,
+        staleTokenLimit,
       })
     ) {
       const compacted = await autoCompactHistoryIfNeeded({
         dispatch,
         getState,
         ideMessenger: extra.ideMessenger,
-        contextPercentage:
-          precompiledRes.status === "success"
-            ? precompiledRes.content.contextPercentage
-            : undefined,
-        didPrune:
-          precompiledRes.status === "success"
-            ? precompiledRes.content.didPrune
-            : false,
+        contextPercentage: compiled?.contextPercentage,
+        didPrune: compiled?.didPrune,
         notEnoughContext,
+        staleTokens,
+        compactStaleHistory,
+        staleTokenLimit,
       });
       if (compacted && getState().session.isStreaming) {
         ({ messages, appliedRules, appliedRuleIndex } = buildMessages());
@@ -337,6 +352,15 @@ export const streamNormalInput = createAsyncThunk<
 
     const start = Date.now();
     const streamAborter = state.session.streamAborter;
+    let abortedForNudge = false;
+    const isAbortError = (error: unknown) =>
+      (error instanceof DOMException && error.name === "AbortError") ||
+      (error instanceof Error &&
+        (error.name === "AbortError" ||
+          error.message.toLowerCase().includes("abort")));
+    const streamStopped = () =>
+      !getState().session.isStreaming ||
+      (streamAborter.signal.aborted && !abortedForNudge);
     try {
       let gen = extra.ideMessenger.llmStreamChat(
         {
@@ -364,6 +388,15 @@ export const streamNormalInput = createAsyncThunk<
         }
 
         dispatch(streamUpdate(next.value));
+        if (
+          activeTools.length > 0 &&
+          state.session.mode === "agent" &&
+          shouldAbortStreamingPhraseLoop(getState().session.history)
+        ) {
+          abortedForNudge = true;
+          dispatch(abortStream());
+          break;
+        }
         next = await gen.next();
       }
 
@@ -397,7 +430,9 @@ export const streamNormalInput = createAsyncThunk<
         }
       }
     } catch (e) {
-      if (isMalformedStreamError(e)) {
+      if (abortedForNudge || isAbortError(e)) {
+        // The request was stopped on purpose: user cancel or a phrase loop abort.
+      } else if (isMalformedStreamError(e)) {
         throw toMalformedResponseError(e);
       }
       const toolCallsToCancel = selectCurrentToolCalls(getState());
@@ -429,7 +464,7 @@ export const streamNormalInput = createAsyncThunk<
     // Tool call sequence:
     // 1. A tool call without an id or name is a broken stream, not a tool.
     const state1 = getState();
-    if (streamAborter.signal.aborted || !state1.session.isStreaming) {
+    if (streamStopped()) {
       return;
     }
     const originalToolCalls = selectCurrentToolCalls(state1);
@@ -453,7 +488,7 @@ export const streamNormalInput = createAsyncThunk<
 
     // 2. Pre-process args to catch invalid args before checking policies
     const state2 = getState();
-    if (streamAborter.signal.aborted || !state2.session.isStreaming) {
+    if (streamStopped()) {
       return;
     }
     const generatedCalls2 = selectPendingToolCalls(state2);
@@ -466,7 +501,7 @@ export const streamNormalInput = createAsyncThunk<
 
     // 3. Security check: evaluate updated policies based on args
     const state3 = getState();
-    if (streamAborter.signal.aborted || !state3.session.isStreaming) {
+    if (streamStopped()) {
       return;
     }
     const generatedCalls3 = selectPendingToolCalls(state3);
@@ -493,7 +528,24 @@ export const streamNormalInput = createAsyncThunk<
 
     // 4. Execute remaining tool calls
     if (originalToolCalls.length === 0) {
-      dispatch(setInactive());
+      const loop = getState().session.toolLoop ?? EMPTY_TOOL_LOOP;
+      const spoken = currentReplyWithoutTools(getState().session.history);
+      const canNudge =
+        activeTools.length > 0 &&
+        state.session.mode === "agent" &&
+        spoken.trim().length > 0 &&
+        !loop.phraseNudgeSent &&
+        shouldNudgeForMissingToolCall(spoken);
+      if (canNudge) {
+        dispatch(clearStalledAssistantReply());
+        dispatch(setToolLoop({ ...loop, phraseNudgeSent: true }));
+        dispatch(appendLoopResume(PHRASE_LOOP_RESUME));
+        unwrapResult(
+          await dispatch(streamNormalInput({ depth: depth + 1 })),
+        );
+      } else {
+        dispatch(setInactive());
+      }
     } else if (needsApprovalPolicies.length > 0) {
       const builtInReadonlyAutoApproved = autoApprovedPolicies.filter(
         ({ toolCallState }) =>
@@ -503,7 +555,7 @@ export const streamNormalInput = createAsyncThunk<
 
       if (builtInReadonlyAutoApproved.length > 0) {
         const state4 = getState();
-        if (streamAborter.signal.aborted || !state4.session.isStreaming) {
+        if (streamStopped()) {
           return;
         }
         await executeAutoTools(
@@ -516,7 +568,7 @@ export const streamNormalInput = createAsyncThunk<
       // auto stream cases increase thunk depth by 1 for debugging
       const state4 = getState();
       const generatedCalls4 = selectPendingToolCalls(state4);
-      if (streamAborter.signal.aborted || !state4.session.isStreaming) {
+      if (streamStopped()) {
         return;
       }
       if (generatedCalls4.length > 0) {

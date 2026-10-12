@@ -26,7 +26,6 @@ interface AskSageCompletionOptions extends CompletionOptions {
   enabledMcpTools?: string[];
   toolsToExecute?: string[];
   askSageToolChoice?: AskSageToolChoice;
-  reasoningEffort?: "low" | "medium" | "high";
   deepAgentId?: number;
   streaming?: boolean;
   file?: unknown;

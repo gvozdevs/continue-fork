@@ -8,10 +8,12 @@ import {
   ToolResultChatMessage,
   UserChatMessage,
 } from "core";
+import { collapseRepeatedContent } from "core/llm/collapseRepeats";
 import { chatMessageIsEmpty } from "core/llm/messages";
 import { getSystemMessageWithRules } from "core/llm/rules/getSystemMessageWithRules";
 import { RulePolicies } from "core/llm/rules/types";
 import { BuiltInToolNames } from "core/tools/builtIn";
+import { shapedReadContents } from "core/tools/elideReadResults";
 import {
   CANCELLED_TOOL_CALL_MESSAGE,
   ERRORED_TOOL_CALL_OUTPUT_MESSAGE,
@@ -47,19 +49,44 @@ export function constructMessages(
 } {
   // Find the most recent conversation summary and filter history accordingly
   let summaryContent = "";
+  let summaryIndex = -1;
   let filteredHistory = history;
 
   for (let i = history.length - 1; i >= 0; i--) {
     const summary = history[i].conversationSummary;
     if (summary) {
       summaryContent = summary;
+      summaryIndex = i;
       // Only include messages that come AFTER the message with the summary
       filteredHistory = history.slice(i + 1);
       break;
     }
   }
 
+  if (summaryIndex > 0) {
+    const taskIndex = history.findIndex(
+      (item) => item.message.role === "user" && !item.hidden,
+    );
+    if (taskIndex >= 0 && taskIndex < summaryIndex) {
+      filteredHistory = [history[taskIndex], ...filteredHistory];
+    }
+  }
+
   const historyCopy = [...filteredHistory];
+  const shapedReads = shapedReadContents(
+    historyCopy.flatMap((item) =>
+      (item.toolCallStates ?? []).map((toolCallState) => ({
+        id: toolCallState.toolCall.id ?? toolCallState.toolCallId,
+        name: toolCallState.toolCall.function?.name ?? "",
+        arguments: toolCallState.toolCall.function?.arguments,
+        content: toolCallState.output
+          ? renderContextItems(toolCallState.output)
+          : "",
+      })),
+    ),
+  );
+  const shapeRead = (id: string, content: string) =>
+    shapedReads.get(id) ?? content;
 
   const msgs: MessageWithContextItems[] = [];
   let appliedRuleIndex = -1;
@@ -103,16 +130,42 @@ export function constructMessages(
         message: item.message,
       });
     } else if (item.message.role === "assistant") {
+      // A reply that repeated itself is sent once, so the model does not copy the pattern.
+      const assistantMessage = {
+        ...item.message,
+        content: collapseRepeatedContent(item.message.content),
+      };
       // When using system message tools, convert tool calls/states to text content
       if (item.toolCallStates?.length && useSystemToolsFramework) {
-        const { userMessage, assistantMessage } =
+        const toolCallStates = item.toolCallStates.map((toolCallState) => {
+          const rendered = toolCallState.output
+            ? renderContextItems(toolCallState.output)
+            : "";
+          const name = toolCallState.toolCall.function?.name;
+          const id = toolCallState.toolCall.id ?? toolCallState.toolCallId;
+          const elided = shapeRead(id, rendered);
+          if (elided === rendered) {
+            return toolCallState;
+          }
+          return {
+            ...toolCallState,
+            output: [
+              {
+                name: name ?? "read_file",
+                description: "omitted",
+                content: elided,
+              },
+            ],
+          };
+        });
+        const { userMessage, assistantMessage: converted } =
           convertToolCallStatesToSystemCallsAndOutput(
-            item.message,
-            item.toolCallStates ?? [],
+            assistantMessage,
+            toolCallStates,
             useSystemToolsFramework,
           );
         msgs.push({
-          message: assistantMessage,
+          message: converted,
           ctxItems: [],
         });
         msgs.push({
@@ -124,7 +177,7 @@ export function constructMessages(
 
       msgs.push({
         ctxItems: item.contextItems,
-        message: item.message,
+        message: assistantMessage,
       });
 
       // Add a tool message for each tool call
@@ -145,6 +198,7 @@ export function constructMessages(
             } else {
               content = renderContextItems(output);
             }
+            content = shapeRead(toolCall.id ?? toolCallState.toolCallId, content);
           } else if (toolCallState.status === "errored") {
             content = ERRORED_TOOL_CALL_OUTPUT_MESSAGE;
           }

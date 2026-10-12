@@ -1,6 +1,7 @@
 import { createAsyncThunk, unwrapResult } from "@reduxjs/toolkit";
 import { ContextItem, McpUiState } from "core";
 import { CLIENT_TOOLS_IMPLS } from "core/tools/builtIn";
+import { TOOL_RETRY_HINT } from "core/tools/constants";
 import { ContinueError, ContinueErrorReason } from "core/util/errors";
 
 import { callClientTool } from "../../util/clientTools/callClientTool";
@@ -120,7 +121,7 @@ export const callToolById = createAsyncThunk<
             icon: "problems",
             name: "Tool Call Error",
             description: "Tool Call Failed",
-            content: `${toolCallState.toolCall.function.name} failed with the message: ${error.message}\n\nPlease try something else or request further instructions.`,
+            content: `${toolCallState.toolCall.function.name} failed with the message: ${error.message}\n\n${TOOL_RETRY_HINT}`,
             hidden: false,
           },
           ...loopNoticeItems,

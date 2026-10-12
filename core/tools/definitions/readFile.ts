@@ -8,6 +8,12 @@ import {
 import { BUILT_IN_GROUP_NAME, BuiltInToolNames } from "../builtIn";
 import { evaluateFileAccessPolicy } from "../policies/fileAccess";
 
+export type ReadFileTarget = {
+  path: string;
+  start_line?: number;
+  end_line?: number;
+};
+
 export function filePathsFromArg(value: unknown): string[] {
   if (typeof value === "string" && value.trim()) {
     return [value];
@@ -18,6 +24,55 @@ export function filePathsFromArg(value: unknown): string[] {
     );
   }
   return [];
+}
+
+function optionalBound(value: unknown): number | undefined {
+  if (value === undefined || value === null || value === "") {
+    return undefined;
+  }
+  const parsed = typeof value === "number" ? value : parseInt(String(value), 10);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function readTargetsFromArgs(
+  args: Record<string, unknown>,
+): ReadFileTarget[] {
+  const files = args.files;
+  if (Array.isArray(files) && files.length > 0) {
+    const targets: ReadFileTarget[] = [];
+    for (const item of files) {
+      if (typeof item === "string" && item.trim()) {
+        targets.push({ path: item.trim() });
+        continue;
+      }
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        continue;
+      }
+      const record = item as Record<string, unknown>;
+      const path =
+        typeof record.path === "string"
+          ? record.path
+          : typeof record.filepath === "string"
+            ? record.filepath
+            : "";
+      if (!path.trim()) {
+        continue;
+      }
+      targets.push({
+        path: path.trim(),
+        start_line: optionalBound(record.start_line ?? record.startLine),
+        end_line: optionalBound(record.end_line ?? record.endLine),
+      });
+    }
+    if (targets.length > 0) {
+      return targets;
+    }
+  }
+
+  const paths = filePathsFromArg(args.filepath);
+  const start_line = optionalBound(args.start_line ?? args.startLine);
+  const end_line = optionalBound(args.end_line ?? args.endLine);
+  return paths.map((path) => ({ path, start_line, end_line }));
 }
 
 export const readFileTool: Tool = {
@@ -32,28 +87,60 @@ export const readFileTool: Tool = {
   function: {
     name: BuiltInToolNames.ReadFile,
     description:
-      "Read one or more files whose paths are already known. Call it immediately; do not describe the read first. When several files are known, pass every path in this one call. Optional start_line and end_line are 1-based inclusive bounds for every path in the call. A long file with no range returns the first window and the total line count.",
+      "Read one or more files whose paths are already known. Call it immediately; do not describe the read first. Prefer the files array so each path can have its own start_line and end_line. filepath still works for one path or several paths that share the same range. A long file with no range returns the first window and the total line count. To find a name in the rest of a long file, call grep_search with path set to that file.",
     parameters: {
       type: "object",
-      required: ["filepath"],
       properties: {
+        files: {
+          type: "array",
+          description:
+            "Files to read in this one call. Each entry can set its own 1-based inclusive line range.",
+          items: {
+            type: "object",
+            required: ["path"],
+            properties: {
+              path: {
+                type: "string",
+                description:
+                  "Path relative to the workspace root, absolute, a tilde path (~/...), or a file:// URI.",
+              },
+              start_line: {
+                anyOf: [
+                  { type: "integer" },
+                  { type: "string" },
+                  { type: "null" },
+                ],
+                description: "Optional 1-based first line for this file.",
+              },
+              end_line: {
+                anyOf: [
+                  { type: "integer" },
+                  { type: "string" },
+                  { type: "null" },
+                ],
+                description:
+                  "Optional 1-based last line, inclusive, for this file.",
+              },
+            },
+          },
+        },
         filepath: {
           anyOf: [
             { type: "string" },
             { type: "array", items: { type: "string" } },
           ],
           description:
-            "A path, or an array of paths, to read in this one call. Each path can be relative to the workspace root, absolute, a tilde path (~/...), or a file:// URI.",
+            "A path, or an array of paths, that share the same start_line/end_line. Prefer files when ranges differ.",
         },
         start_line: {
           anyOf: [{ type: "integer" }, { type: "string" }, { type: "null" }],
           description:
-            "Optional 1-based first line. Applies to every path in this call. Omit to start at line 1.",
+            "Optional 1-based first line. Applies to every filepath in this call. Omit to start at line 1.",
         },
         end_line: {
           anyOf: [{ type: "integer" }, { type: "string" }, { type: "null" }],
           description:
-            "Optional 1-based last line, inclusive. Applies to every path in this call. Omit to read through the end, or through the first window if the file is too large.",
+            "Optional 1-based last line, inclusive. Applies to every filepath in this call.",
         },
       },
     },
@@ -65,9 +152,9 @@ export const readFileTool: Tool = {
   defaultToolPolicy: "allowedWithoutPermission",
   toolCallIcon: "DocumentIcon",
   preprocessArgs: async (args, { ide }) => {
-    const paths = filePathsFromArg(args.filepath);
+    const targets = readTargetsFromArgs(args);
     const resolvedPaths = await Promise.all(
-      paths.map((filepath) => resolveInputPath(ide, filepath)),
+      targets.map((target) => resolveInputPath(ide, target.path)),
     );
 
     return {

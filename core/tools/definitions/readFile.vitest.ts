@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filePathsFromArg } from "./readFile";
+import { filePathsFromArg, readTargetsFromArgs } from "./readFile";
 import {
   limitLines,
   optionalLine,
@@ -18,6 +18,35 @@ describe("filePathsFromArg", () => {
 
   it("drops empty entries", () => {
     expect(filePathsFromArg(["a.go", "  ", 1])).toEqual(["a.go"]);
+  });
+});
+
+describe("readTargetsFromArgs", () => {
+  it("keeps a per-file range on files[]", () => {
+    expect(
+      readTargetsFromArgs({
+        files: [
+          { path: "docs/req.md", start_line: 1, end_line: 80 },
+          { path: "types.go" },
+        ],
+      }),
+    ).toEqual([
+      { path: "docs/req.md", start_line: 1, end_line: 80 },
+      { path: "types.go" },
+    ]);
+  });
+
+  it("applies a shared range to filepath", () => {
+    expect(
+      readTargetsFromArgs({
+        filepath: ["a.go", "b.go"],
+        start_line: 10,
+        end_line: "20",
+      }),
+    ).toEqual([
+      { path: "a.go", start_line: 10, end_line: 20 },
+      { path: "b.go", start_line: 10, end_line: 20 },
+    ]);
   });
 });
 
@@ -59,15 +88,14 @@ describe("read file line window", () => {
   it("names the next read_file call with exact line numbers", () => {
     const notice = readWindowNotice("api/swagger.yaml", 1, 400, 1000, true);
     expect(notice).toContain("600 more lines follow");
-    expect(notice).toContain(
-      'filepath "api/swagger.yaml", start_line 401, end_line 800',
-    );
-    expect(notice).toContain('grep_search with path "api/swagger.yaml"');
+    expect(notice).toContain("Prefer grep_search");
+    expect(notice).toContain('"start_line": 401');
+    expect(notice).toContain('"end_line": 800');
   });
 
   it("clips the next window at the end of the file", () => {
     const notice = readWindowNotice("api/swagger.yaml", 401, 800, 1000, true);
-    expect(notice).toContain("start_line 801, end_line 1000");
+    expect(notice).toContain("start_line\": 801");
   });
 
   it("does not offer a next window when the range is complete", () => {

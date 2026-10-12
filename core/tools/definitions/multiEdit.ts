@@ -11,9 +11,8 @@ import {
   requireFilepath,
   resolveExistingFile,
   resolveNewFile,
+  throwIfEditArgsTooLarge,
 } from "../fileWritePlan";
-import { NO_PARALLEL_TOOL_CALLING_INSTRUCTION } from "./editFile";
-
 export interface EditOperation {
   old_string: string;
   new_string: string;
@@ -25,11 +24,46 @@ export interface MultiEditArgs {
   edits: EditOperation[];
 }
 
+function pickEditText(
+  record: Record<string, unknown>,
+  keys: string[],
+): unknown {
+  for (const key of keys) {
+    if (key in record) {
+      return record[key];
+    }
+  }
+  return undefined;
+}
+
+export function schemaArgsForMultiEdit(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (!Array.isArray(args.edits)) {
+    return args;
+  }
+  return {
+    ...args,
+    edits: args.edits.map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        return item;
+      }
+      const record = item as Record<string, unknown>;
+      return {
+        ...record,
+        old_string: pickEditText(record, ["old_string", "old_text"]),
+        new_string: pickEditText(record, ["new_string", "new_text"]),
+      };
+    }),
+  };
+}
+
 export async function prepareMultiEdit(
   args: Record<string, unknown>,
   ide: IDE,
 ): Promise<PreparedFileEdit | PreparedFileCreate> {
   const filepath = requireFilepath(args.filepath);
+  throwIfEditArgsTooLarge(args);
   if (!multiEditHasEdits(args)) {
     if (typeof args.contents !== "string") {
       throw new ContinueError(
@@ -44,7 +78,7 @@ export async function prepareMultiEdit(
     };
   }
 
-  const { edits } = validateMultiEdit(args);
+  const { edits } = validateMultiEdit(schemaArgsForMultiEdit(args));
   const fileUri = await resolveExistingFile(filepath, ide);
   const editingFileContents = await ide.readFile(fileUri);
   return {
@@ -72,6 +106,7 @@ export const multiEditTool: Tool = {
 To create a missing file, pass filepath and contents. Do not pass edits.
 To change an existing file, pass filepath and edits. Read the file first. Do not pass contents.
 If the file already exists, contents is rejected. If it does not exist, edits are rejected.
+Each old_string, new_string, and contents value must be at most 6000 characters. Split a longer change into several edits.
 Do not print the file in the reply. The file text belongs only in this call.
 
 Use this tool to make multiple edits to a single file in one operation. It allows you to perform multiple find-and-replace operations efficiently. 
@@ -92,7 +127,7 @@ IMPORTANT:
 
 CRITICAL REQUIREMENTS:
 1. ALWAYS use the ${BuiltInToolNames.ReadFile} tool just before making edits, to understand the file's up-to-date contents and context. The user can also edit the file while you are working with it.
-2. ${NO_PARALLEL_TOOL_CALLING_INSTRUCTION}
+2. Make one ${BuiltInToolNames.MultiEdit} call per response. Other tools, such as ${BuiltInToolNames.ReadFile} or run_terminal_command, can be called in the same response.
 3. When making edits:
 - Ensure all edits result in idiomatic, correct code
 - Do not leave the code in a broken state
@@ -128,12 +163,20 @@ WARNINGS:
               old_string: {
                 type: "string",
                 description:
-                  "The text to replace (exact match including whitespace/indentation)",
+                  "The text to replace (exact match including whitespace/indentation). old_text is accepted as an alias.",
+              },
+              old_text: {
+                type: "string",
+                description: "Alias for old_string.",
               },
               new_string: {
                 type: "string",
                 description:
-                  "The text to replace it with. MUST be different than old_string.",
+                  "The text to replace it with. MUST be different than old_string. new_text is accepted as an alias.",
+              },
+              new_text: {
+                type: "string",
+                description: "Alias for new_string.",
               },
               replace_all: {
                 type: "boolean",

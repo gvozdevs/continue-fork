@@ -11,6 +11,18 @@ import { searchFileText } from "./searchFileText";
 const DEFAULT_GREP_SEARCH_RESULTS_LIMIT = 100;
 const DEFAULT_GREP_SEARCH_CHAR_LIMIT = 7500; // ~1500 tokens, will keep truncation simply for now
 
+export function grepQueriesFromArgs(args: Record<string, unknown>): string[] {
+  const fromArray = Array.isArray(args.queries)
+    ? args.queries.filter(
+        (item): item is string => typeof item === "string" && item.trim() !== "",
+      )
+    : [];
+  if (fromArray.length > 0) {
+    return fromArray;
+  }
+  return [getStringArg(args, "query")];
+}
+
 function splitGrepResultsByFile(content: string): ContextItem[] {
   const matches = [...content.matchAll(/^\.\/([^\n]+)$/gm)];
 
@@ -119,11 +131,30 @@ async function searchOneFile(
 }
 
 export const grepSearchImpl: ToolImpl = async (args, extras) => {
-  const rawQuery = getStringArg(args, "query");
+  const queries = grepQueriesFromArgs(args);
   const filePath = typeof args.path === "string" ? args.path.trim() : "";
-  if (filePath) {
-    return searchOneFile(filePath, rawQuery, extras);
+  const items: ContextItem[] = [];
+  for (const rawQuery of queries) {
+    const found = filePath
+      ? await searchOneFile(filePath, rawQuery, extras)
+      : await searchWorkspace(rawQuery, args, extras);
+    if (queries.length > 1) {
+      items.push({
+        name: "Search query",
+        description: rawQuery,
+        content: `Query: ${rawQuery}`,
+      });
+    }
+    items.push(...found);
   }
+  return items;
+};
+
+async function searchWorkspace(
+  rawQuery: string,
+  args: Record<string, unknown>,
+  extras: Parameters<ToolImpl>[1],
+): Promise<ContextItem[]> {
 
   const { query, warning } = prepareQueryForRipgrep(rawQuery);
 
@@ -159,11 +190,12 @@ export const grepSearchImpl: ToolImpl = async (args, extras) => {
   );
 
   if (numResults === 0) {
+    const hint = warning ? ` ${warning}` : "";
     return [
       {
         name: "Search results",
         description: "Results from grep search",
-        content: "The search returned no results.",
+        content: `The search returned no results for "${rawQuery}".${hint} Try one shorter word or a different spelling, or list the directory with ls or file_glob_search. Build, cache, and secrets paths are not searched.`,
       },
     ];
   }
@@ -182,7 +214,7 @@ export const grepSearchImpl: ToolImpl = async (args, extras) => {
 
   let contextItems: ContextItem[];
 
-  const splitByFile: boolean = args?.splitByFile || false;
+  const splitByFile = args.splitByFile === true;
   if (splitByFile) {
     contextItems = splitGrepResultsByFile(formatted);
   } else {
@@ -214,4 +246,4 @@ export const grepSearchImpl: ToolImpl = async (args, extras) => {
     });
   }
   return contextItems;
-};
+}

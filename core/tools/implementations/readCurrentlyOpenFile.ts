@@ -13,6 +13,7 @@ export const readCurrentlyOpenFileImpl: ToolImpl = async (_, extras) => {
       result.path,
       result.contents,
       extras.config.selectedModelByRole.chat,
+      extras.config.ui?.readFileMaxTokens,
     );
 
     const { relativePathOrBasename, last2Parts, baseName } = getUriDescription(
