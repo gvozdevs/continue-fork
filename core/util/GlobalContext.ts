@@ -54,6 +54,12 @@ export type GlobalContextType = {
       codeVerifier?: string;
     };
   };
+  /**
+   * Localhost port used as the OAuth redirect URI for MCP servers.
+   * Kept stable so a dynamic client registration is not repeated on every launch.
+   * A new port is chosen only when this one cannot be bound.
+   */
+  mcpOauthCallbackPort?: number;
 };
 
 /**

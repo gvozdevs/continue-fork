@@ -45,7 +45,7 @@ const ContextStatus = () => {
       ? "text-red-400"
       : percent >= 60
         ? "text-yellow-500"
-        : "text-description";
+        : "text-green-500";
   const ring = 14;
   const stroke = 2;
   const radius = (ring - stroke) / 2;

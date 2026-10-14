@@ -1,8 +1,15 @@
 import fs from "node:fs";
+import http from "node:http";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GlobalContext } from "../../util/GlobalContext";
 import { getGlobalContextFilePath } from "../../util/paths";
-import { getOauthToken, performAuth, removeMCPAuth } from "./MCPOauth";
+import {
+  getOauthToken,
+  MCPConnectionOauthProvider,
+  performAuth,
+  removeMCPAuth,
+  resetMcpOauthCallbackForTests,
+} from "./MCPOauth";
 
 // Mock the MCP SDK auth module
 vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
@@ -24,7 +31,8 @@ describe("MCPOauth", () => {
   let mockMcpServerId: string;
   let mockMcpServerUrl: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await resetMcpOauthCallbackForTests();
     // file is present in the core/test directory
     globalContextFilePath = getGlobalContextFilePath();
     if (fs.existsSync(globalContextFilePath)) {
@@ -43,7 +51,8 @@ describe("MCPOauth", () => {
     vi.clearAllMocks();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await resetMcpOauthCallbackForTests();
     if (fs.existsSync(globalContextFilePath)) {
       fs.unlinkSync(globalContextFilePath);
     }
@@ -110,12 +119,46 @@ describe("MCPOauth", () => {
       );
 
       expect(mockAuth).toHaveBeenCalledWith(
-        expect.any(Object), // MCPConnectionOauthProvider instance
+        expect.any(MCPConnectionOauthProvider),
         {
           serverUrl: "https://test-server.com",
         },
       );
+      const provider = mockAuth.mock.calls[0][0] as MCPConnectionOauthProvider;
+      expect(provider.clientMetadata.redirect_uris[0]).toMatch(
+        /^http:\/\/localhost:\d+$/,
+      );
+      expect(await provider.state()).toEqual(expect.any(String));
       expect(result).toBe("AUTHORIZED");
+    });
+
+    test("should drop a client registration whose redirect URI changed", async () => {
+      const globalContext = new GlobalContext();
+      globalContext.update("mcpOauthStorage", {
+        "https://test-server.com": {
+          tokens: {
+            access_token: "keep-me",
+            token_type: "Bearer",
+          },
+          clientInformation: {
+            client_id: "old-client",
+            redirect_uris: ["http://localhost:3000/?state=stale"],
+          },
+        },
+      });
+
+      const { auth } = await import("@modelcontextprotocol/sdk/client/auth.js");
+      vi.mocked(auth).mockResolvedValue("AUTHORIZED");
+
+      await performAuth(mockMcpServerId, mockMcpServerUrl, mockIde);
+
+      const storage = globalContext.get("mcpOauthStorage");
+      expect(storage?.["https://test-server.com"]?.tokens?.access_token).toBe(
+        "keep-me",
+      );
+      expect(
+        storage?.["https://test-server.com"]?.clientInformation,
+      ).toBeUndefined();
     });
   });
 
@@ -196,8 +239,62 @@ describe("MCPOauth", () => {
       await performAuth(mockMcpServerId, mockMcpServerUrl, vscodeIde);
 
       expect(vscodeIde.getExternalUri).toHaveBeenCalledWith(
-        "http://localhost:3000",
+        expect.stringMatching(/^http:\/\/localhost:\d+$/),
       );
+    });
+
+    test("should use the next free port when the preferred callback port is busy", async () => {
+      const blocker = http.createServer();
+      let holdingPort = false;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          blocker.once("error", reject);
+          blocker.listen(3000, resolve);
+        });
+        holdingPort = true;
+      } catch {
+        // 3000 is already taken, which is the same condition under test.
+      }
+
+      try {
+        const { auth } = await import(
+          "@modelcontextprotocol/sdk/client/auth.js"
+        );
+        const mockAuth = vi.mocked(auth);
+        mockAuth.mockResolvedValue("AUTHORIZED");
+
+        const globalContext = new GlobalContext();
+        globalContext.update("mcpOauthCallbackPort", 3000);
+        globalContext.update("mcpOauthStorage", {
+          "https://test-server.com": {
+            tokens: {
+              access_token: "keep-me",
+              token_type: "Bearer",
+            },
+            clientInformation: {
+              client_id: "old-client",
+              redirect_uris: ["http://localhost:3000"],
+            },
+          },
+        });
+
+        await performAuth(mockMcpServerId, mockMcpServerUrl, mockIde);
+
+        expect(mockIde.getExternalUri).toHaveBeenCalledWith(
+          expect.stringMatching(/^http:\/\/localhost:(?!3000$)\d+$/),
+        );
+        const storage = globalContext.get("mcpOauthStorage");
+        expect(storage?.["https://test-server.com"]?.tokens?.access_token).toBe(
+          "keep-me",
+        );
+        expect(
+          storage?.["https://test-server.com"]?.clientInformation,
+        ).toBeUndefined();
+      } finally {
+        if (holdingPort) {
+          await new Promise<void>((resolve) => blocker.close(() => resolve()));
+        }
+      }
     });
 
     test("should fallback to localhost when getExternalUri is not available", async () => {

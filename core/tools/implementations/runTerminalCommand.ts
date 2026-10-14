@@ -1,5 +1,5 @@
 import iconv from "iconv-lite";
-import childProcess from "node:child_process";
+import childProcess, { type StdioOptions } from "node:child_process";
 import os from "node:os";
 import { ContinueError, ContinueErrorReason } from "../../util/errors";
 import { tailTerminalOutput } from "./terminalOutput";
@@ -25,10 +25,18 @@ function getDecodedOutput(data: Buffer): string {
 } // Simple helper function to use login shell on Unix/macOS and PowerShell on Windows
 function getShellCommand(command: string): { shell: string; args: string[] } {
   if (process.platform === "win32") {
-    // Windows: Use PowerShell
+    // -NonInteractive: Read-Host and confirmation prompts fail immediately
+    // instead of blocking until the tool timeout.
     return {
       shell: "powershell.exe",
-      args: ["-NoLogo", "-ExecutionPolicy", "Bypass", "-Command", command],
+      args: [
+        "-NoLogo",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        command,
+      ],
     };
   } else {
     // Unix/macOS: Use login shell to source .bashrc/.zshrc etc.
@@ -92,6 +100,12 @@ function resolveWorkingDirectory(workspaceDirs: string[]): string {
   }
 }
 
+// stdin is "ignore" so commands that read it (Get-Content, gofmt, gofumpt,
+// Select-String without -Pattern) get EOF and exit. An open pipe never
+// closes, so those processes stay alive until the 2-minute kill even after
+// their output is already visible in the UI.
+const terminalStdio: StdioOptions = ["ignore", "pipe", "pipe"];
+
 // Add color-supporting environment variables
 const getColorEnv = () => ({
   ...process.env,
@@ -133,6 +147,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
 
         return new Promise((resolve, reject) => {
           let terminalOutput = "";
+          let timedOut = false;
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           let sigkillTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -158,6 +173,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           const childProc = childProcess.spawn(shell, args, {
             cwd,
             env: getColorEnv(), // Add enhanced environment for colors
+            stdio: terminalStdio,
           });
 
           // Track this process for foreground cancellation
@@ -180,6 +196,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
           if (waitForCompletion) {
             timeoutId = setTimeout(() => {
               if (isRunning()) {
+                timedOut = true;
                 terminalOutput +=
                   "\n[Timeout: process killed after 2 minutes]\n";
 
@@ -304,28 +321,21 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             }
 
             if (waitForCompletion) {
-              // Normal completion, resolve now
-              if (!code || code === 0) {
-                const status = "Command completed";
-                resolve([
-                  {
-                    name: "Terminal",
-                    description: "Terminal command output",
-                    content: tailTerminalOutput(terminalOutput),
-                    status: status,
-                  },
-                ]);
-              } else {
-                const status = `Command failed with exit code ${code}`;
-                resolve([
-                  {
-                    name: "Terminal",
-                    description: "Terminal command output",
-                    content: tailTerminalOutput(terminalOutput),
-                    status: status,
-                  },
-                ]);
-              }
+              // A kill on Windows often closes with a null code. That must
+              // not be reported as success after the timeout fired.
+              const status = timedOut
+                ? "Command timed out"
+                : !code || code === 0
+                  ? "Command completed"
+                  : `Command failed with exit code ${code}`;
+              resolve([
+                {
+                  name: "Terminal",
+                  description: "Terminal command output",
+                  content: tailTerminalOutput(terminalOutput),
+                  status: status,
+                },
+              ]);
             } else {
               // Already resolved, just update the UI with final output
               if (extras.onPartialOutput) {
@@ -388,6 +398,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
             getShellCommand(command);
           const output = await new Promise<{ stdout: string; stderr: string }>(
             (resolve, reject) => {
+              let timedOut = false;
               let timeoutId: ReturnType<typeof setTimeout> | undefined;
               let sigkillTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
@@ -397,6 +408,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                 {
                   cwd,
                   env: getColorEnv(),
+                  stdio: terminalStdio,
                 },
               );
 
@@ -417,6 +429,7 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
               // Set up timeout
               timeoutId = setTimeout(() => {
                 if (isRunning()) {
+                  timedOut = true;
                   stderr += "\n[Timeout: process killed after 2 minutes]\n";
 
                   // Try graceful termination first
@@ -455,7 +468,14 @@ export const runTerminalCommandImpl: ToolImpl = async (args, extras) => {
                   removeRunningProcess(toolCallId);
                 }
 
-                if (code === 0) {
+                if (timedOut) {
+                  const error = new ContinueError(
+                    ContinueErrorReason.CommandExecutionFailed,
+                    "Command timed out",
+                  );
+                  (error as any).stderr = stderr;
+                  reject(error);
+                } else if (code === 0) {
                   resolve({ stdout, stderr });
                 } else {
                   const error = new ContinueError(

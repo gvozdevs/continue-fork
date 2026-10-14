@@ -145,6 +145,10 @@ function MCPServerPreview({
     });
   };
 
+  const canOauth = "url" in server && server.type !== "websocket";
+  const showAuthenticate =
+    canOauth && server.status !== "connected" && server.status !== "disabled";
+
   const toggleSection = (section: string) => {
     setExpandedSections((prev) => ({
       ...prev,
@@ -237,45 +241,39 @@ function MCPServerPreview({
         </div>
 
         <div className="flex items-center gap-1">
-          {server.isProtectedResource &&
-            "url" in server &&
-            server.status !== "connected" && (
-              <ToolTip
-                content={
-                  server.status === "error"
-                    ? "Authenticate"
-                    : server.status === "authenticating"
-                      ? "Authenticating..."
-                      : "Remove authentication"
+          {showAuthenticate && (
+            <ToolTip
+              content={
+                server.status === "authenticating"
+                  ? "Authenticating..."
+                  : "Authenticate"
+              }
+            >
+              <Button
+                onClick={
+                  server.status === "authenticating"
+                    ? undefined
+                    : onAuthenticate
                 }
+                variant="ghost"
+                size="sm"
+                className="text-description-muted hover:enabled:text-foreground my-0 h-6 w-6 p-0 pt-0.5"
+                disabled={server.status === "authenticating"}
               >
-                <Button
-                  onClick={
-                    server.status === "error"
-                      ? onAuthenticate
-                      : server.status === "authenticating"
-                        ? undefined
-                        : onRemoveAuth
-                  }
-                  variant="ghost"
-                  size="sm"
-                  className="text-description-muted hover:enabled:text-foreground my-0 h-6 w-6 p-0 pt-0.5"
-                  disabled={server.status === "authenticating"}
-                >
-                  {server.status === "authenticating" ? (
-                    <GlobeAltIcon className="animate-spin-slow h-4 w-4 flex-shrink-0" />
-                  ) : (
-                    <UserCircleIcon className="h-4 w-4 flex-shrink-0" />
-                  )}
-                </Button>
-              </ToolTip>
-            )}
+                {server.status === "authenticating" ? (
+                  <GlobeAltIcon className="animate-spin-slow h-4 w-4 flex-shrink-0" />
+                ) : (
+                  <UserCircleIcon className="h-4 w-4 flex-shrink-0" />
+                )}
+              </Button>
+            </ToolTip>
+          )}
           <Listbox>
             <ListboxButton>
               <EllipsisVerticalIcon className="h-4 w-4 flex-shrink-0" />
             </ListboxButton>
             <ListboxOptions className="min-w-fit" anchor="bottom end">
-              {server.isProtectedResource && server.status === "connected" && (
+              {canOauth && server.isProtectedResource && (
                 <ListboxOption
                   value="remove auth"
                   onClick={onRemoveAuth}

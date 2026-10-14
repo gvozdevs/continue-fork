@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  InternalMcpOptions,
   InternalSseMcpOptions,
   InternalStdioMcpOptions,
   InternalWebsocketMcpOptions,
@@ -15,8 +16,32 @@ vi.mock("../../util/shellPath", () => ({
     .mockResolvedValue("/usr/local/bin:/usr/bin:/bin"),
 }));
 
+const oauthState = vi.hoisted(() => ({
+  accessToken: undefined as string | undefined,
+}));
+
+vi.mock("./MCPOauth", () => ({
+  MCPConnectionOauthProvider: class {
+    redirectUrl = "http://localhost:3000";
+    constructor(public oauthServerUrl: string) {}
+    async ensureRedirectUrl() {
+      return this.redirectUrl;
+    }
+    async tokens() {
+      if (!oauthState.accessToken) {
+        return undefined;
+      }
+      return {
+        access_token: oauthState.accessToken,
+        token_type: "Bearer" as const,
+      };
+    }
+  },
+}));
+
 describe("MCPConnection", () => {
   beforeEach(() => {
+    oauthState.accessToken = undefined;
     vi.restoreAllMocks();
   });
 
@@ -283,6 +308,31 @@ describe("MCPConnection", () => {
       // the timeout will happen during transport construction or connect attempt
     });
 
+    it("closes the client before a forced reconnect", async () => {
+      const conn = new MCPConnection(options);
+      const mockClose = vi
+        .spyOn(Client.prototype, "close")
+        .mockResolvedValue(undefined);
+      const mockConnect = vi
+        .spyOn(Client.prototype, "connect")
+        .mockResolvedValue(undefined);
+      vi.spyOn(Client.prototype, "getServerCapabilities").mockReturnValue({});
+
+      const signal = new AbortController().signal;
+      await conn.connectClient(false, signal);
+      mockClose.mockClear();
+      mockConnect.mockClear();
+
+      await conn.connectClient(true, signal);
+
+      expect(conn.status).toBe("connected");
+      expect(mockClose).toHaveBeenCalled();
+      expect(mockConnect).toHaveBeenCalledTimes(1);
+      expect(mockClose.mock.invocationCallOrder[0]).toBeLessThan(
+        mockConnect.mock.invocationCallOrder[0],
+      );
+    });
+
     it("should handle already connected state", async () => {
       const conn = new MCPConnection(options);
       conn.status = "connected";
@@ -338,6 +388,83 @@ describe("MCPConnection", () => {
       expect(conn.errors[0]).toContain("Process output:");
       expect(conn.errors[0]).toContain("STDERR:");
       expect(conn.errors[0]).toContain("Custom error message from stderr");
+    });
+  });
+
+  describe("oauth on url transports", () => {
+    const ide = { getExternalUri: async (uri: string) => uri } as any;
+
+    it("passes the oauth provider to streamable HTTP and marks stored tokens", async () => {
+      oauthState.accessToken = "stored-token";
+      const options = {
+        name: "gitlab",
+        id: "gitlab",
+        type: "streamable-http" as const,
+        url: "https://gitlab.example/api/v4/mcp",
+      };
+      const conn = new MCPConnection(options, { ide });
+      const mockConnect = vi
+        .spyOn(Client.prototype, "connect")
+        .mockResolvedValue(undefined);
+      vi.spyOn(Client.prototype, "getServerCapabilities").mockReturnValue({});
+
+      await conn.connectClient(false, new AbortController().signal);
+
+      const transport = mockConnect.mock.calls[0][0] as {
+        _authProvider?: { oauthServerUrl?: string };
+      };
+      expect(transport._authProvider?.oauthServerUrl).toBe(options.url);
+      expect(conn.isProtectedResource).toBe(true);
+      expect(conn.status).toBe("connected");
+    });
+
+    it("reconnects a streamable HTTP client that is already attached", async () => {
+      const options = {
+        name: "GitLab",
+        id: "gitlab",
+        type: "streamable-http" as const,
+        url: "https://gitlab.example/api/v4/mcp",
+      };
+      const conn = new MCPConnection(options, { ide });
+      const mockClose = vi
+        .spyOn(Client.prototype, "close")
+        .mockResolvedValue(undefined);
+      const mockConnect = vi
+        .spyOn(Client.prototype, "connect")
+        .mockRejectedValueOnce(
+          new Error(
+            "Already connected to a transport. Call close() before connecting to a new transport, or use a separate Protocol instance per connection.",
+          ),
+        )
+        .mockResolvedValueOnce(undefined);
+      vi.spyOn(Client.prototype, "getServerCapabilities").mockReturnValue({});
+
+      await conn.connectClient(true, new AbortController().signal);
+
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+      expect(mockClose.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(conn.status).toBe("connected");
+      expect(conn.errors).toHaveLength(0);
+    });
+
+    it("does not fall back to SSE when an untyped URL returns 401", async () => {
+      const options = {
+        name: "gitlab",
+        id: "gitlab",
+        url: "https://gitlab.example/api/v4/mcp",
+      } as InternalMcpOptions;
+      const conn = new MCPConnection(options, { ide });
+      const error = new Error("nope") as Error & { code: number };
+      error.code = 401;
+      const mockConnect = vi
+        .spyOn(Client.prototype, "connect")
+        .mockRejectedValue(error);
+
+      await conn.connectClient(false, new AbortController().signal);
+
+      expect(mockConnect).toHaveBeenCalledTimes(1);
+      expect(conn.status).toBe("error");
+      expect(conn.isProtectedResource).toBe(true);
     });
   });
 

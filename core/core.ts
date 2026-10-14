@@ -489,20 +489,26 @@ export class Core {
       };
     });
     on("mcp/startAuthentication", async (msg) => {
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-      MCPManagerSingleton.getInstance().setStatus(
-        msg.data.serverId,
-        "authenticating",
-      );
-      const status = await performAuth(
-        msg.data.serverId,
-        msg.data.serverUrl,
-        this.ide,
-      );
-      if (status === "AUTHORIZED") {
-        await MCPManagerSingleton.getInstance().refreshConnection(
+      const manager = MCPManagerSingleton.getInstance();
+      manager.setStatus(msg.data.serverId, "authenticating");
+      try {
+        const status = await performAuth(
           msg.data.serverId,
+          msg.data.serverUrl,
+          this.ide,
         );
+        if (status === "AUTHORIZED") {
+          await manager.refreshConnection(msg.data.serverId);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const connection = manager.connections.get(msg.data.serverId);
+        if (connection) {
+          connection.status = "error";
+          connection.errors.push(`OAuth failed: ${message}`);
+        }
+        manager.onConnectionsRefreshed?.();
+        await this.ide.showToast("error", `OAuth failed: ${message}`);
       }
     });
     on("mcp/removeAuthentication", async (msg) => {

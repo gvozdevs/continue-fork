@@ -147,6 +147,25 @@ describe("runTerminalCommand timeout functionality", () => {
     expect(result[0].content).toContain(
       "[Timeout: process killed after 2 minutes]",
     );
+    expect(result[0].status).toBe("Command timed out");
+  });
+
+  it("closes stdin so commands that read it cannot block until timeout", async () => {
+    const extras = createMockExtras();
+    const args = { command: "echo test", waitForCompletion: true };
+    const resultPromise = runTerminalCommandImpl(args, extras);
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(mockSpawn).toHaveBeenCalled();
+    const spawnOptions = mockSpawn.mock.calls[0][2];
+    expect(spawnOptions.stdio).toEqual(["ignore", "pipe", "pipe"]);
+    if (process.platform === "win32") {
+      expect(mockSpawn.mock.calls[0][1]).toContain("-NonInteractive");
+    }
+
+    mockChildProc.exitCode = 0;
+    mockChildProc.emit("close", 0);
+    await resultPromise;
   });
 
   it("should clear timeout on normal process exit", async () => {

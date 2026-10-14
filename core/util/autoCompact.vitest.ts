@@ -6,9 +6,9 @@ import {
 } from "./autoCompact";
 
 describe("shouldAutoCompactContext", () => {
-  it("compacts at 90% of the input budget", () => {
-    expect(shouldAutoCompactContext({ contextPercentage: 0.9 })).toBe(true);
-    expect(shouldAutoCompactContext({ contextPercentage: 0.89 })).toBe(false);
+  it("compacts at 80% of the input budget", () => {
+    expect(shouldAutoCompactContext({ contextPercentage: 0.8 })).toBe(true);
+    expect(shouldAutoCompactContext({ contextPercentage: 0.79 })).toBe(false);
   });
 
   it("compacts when history was already pruned or cannot fit", () => {
@@ -62,7 +62,7 @@ describe("shouldAutoCompactContext", () => {
     ).toBe(false);
     expect(
       shouldAutoCompactContext({
-        contextPercentage: 0.9,
+        contextPercentage: 0.8,
         staleTokens: AUTO_COMPACT_STALE_TOKENS,
         compactStaleHistory: false,
       }),

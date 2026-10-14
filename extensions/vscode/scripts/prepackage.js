@@ -14,7 +14,11 @@ const { copySqlite } = require("./download-copy-sqlite");
 const { generateAndCopyConfigYamlSchema } = require("./generate-copy-config");
 const { installAndCopyNodeModules } = require("./install-copy-nodemodule");
 const { npmInstall } = require("./npm-install");
-const { writeBuildTimestamp, continueDir } = require("./utils");
+const {
+  downloadRipgrepBinary,
+  writeBuildTimestamp,
+  continueDir,
+} = require("./utils");
 
 // Clear folders that will be packaged to ensure clean slate
 rimrafSync(path.join(__dirname, "..", "bin"));
@@ -374,6 +378,19 @@ void (async () => {
       },
     );
   });
+
+  // npm install fetches ripgrep for the host OS. A Linux package built on
+  // Windows needs the Linux binary, which is named `rg` rather than `rg.exe`.
+  const ripgrepBinary = path.join(
+    "node_modules",
+    "@vscode",
+    "ripgrep",
+    "bin",
+    `rg${exe}`,
+  );
+  if (!fs.existsSync(ripgrepBinary)) {
+    await downloadRipgrepBinary(target);
+  }
 
   // Copy node_modules for pre-built binaries
   const NODE_MODULES_TO_COPY = ["@lancedb", "@vscode/ripgrep", "workerpool"];

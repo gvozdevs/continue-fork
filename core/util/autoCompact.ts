@@ -3,7 +3,7 @@
  * This is a backstop for the model window. Finished-round compaction is
  * separate and stays off unless that setting is on.
  */
-export const AUTO_COMPACT_CONTEXT_RATIO = 0.9;
+export const AUTO_COMPACT_CONTEXT_RATIO = 0.8;
 
 /**
  * Finished rounds beyond the original task and the recent tail.

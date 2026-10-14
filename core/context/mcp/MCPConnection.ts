@@ -8,9 +8,10 @@ import {
   getTemplateVariables,
 } from "@continuedev/config-yaml";
 import {
-  SSEClientTransport,
-  SseError,
-} from "@modelcontextprotocol/sdk/client/sse.js";
+  OAuthClientProvider,
+  UnauthorizedError,
+} from "@modelcontextprotocol/sdk/client/auth.js";
+import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { WebSocketClientTransport } from "@modelcontextprotocol/sdk/client/websocket.js";
@@ -31,7 +32,7 @@ import {
 } from "../..";
 import { resolveRelativePathInDir } from "../../util/ideUtils";
 import { getEnvPathFromUserShell } from "../../util/shellPath";
-import { getOauthToken } from "./MCPOauth";
+import { MCPConnectionOauthProvider } from "./MCPOauth";
 
 const DEFAULT_MCP_TIMEOUT = 20_000; // 20 seconds
 
@@ -48,12 +49,45 @@ const WINDOWS_BATCH_COMMANDS = [
 
 const COMMONS_ENV_VARS = ["HOME", "USER", "USERPROFILE", "LOGNAME", "USERNAME"];
 
-function is401Error(error: unknown) {
+function isReusableTransportError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
   return (
-    (error instanceof SseError && error.code === 401) ||
-    (error instanceof Error && error.message.includes("401")) ||
-    (error instanceof Error && error.message.includes("Unauthorized"))
+    error.message.includes("Already connected to a transport") ||
+    error.message.startsWith("StdioClientTransport already started")
   );
+}
+
+function is401Error(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  if ("code" in error && (error as { code?: unknown }).code === 401) {
+    return true;
+  }
+  if (error instanceof UnauthorizedError) {
+    return true;
+  }
+  if (error instanceof Error) {
+    return (
+      error.message.includes("401") || error.message.includes("Unauthorized")
+    );
+  }
+  return false;
+}
+
+function headersToRecord(
+  headers: HeadersInit | undefined,
+): Record<string, string> {
+  const record: Record<string, string> = {};
+  if (!headers) {
+    return record;
+  }
+  new Headers(headers).forEach((value, key) => {
+    record[key] = value;
+  });
+  return record;
 }
 
 export type MCPExtras = {
@@ -73,6 +107,7 @@ class MCPConnection {
   public resourceTemplates: MCPResourceTemplate[] = [];
   private transport: Transport;
   private connectionPromise: Promise<unknown> | null = null;
+  private connectQueue: Promise<unknown> = Promise.resolve();
   private stdioOutput: { stdout: string; stderr: string } = {
     stdout: "",
     stderr: "",
@@ -119,10 +154,60 @@ class MCPConnection {
     };
   }
 
+  /**
+   * Protocol.connect throws if this client still owns a transport. Reload and
+   * a failed start() both leave it attached, so drop it before every attempt.
+   */
+  private async detachClient() {
+    try {
+      await this.client.close();
+    } catch (error) {
+      console.debug(
+        `Error closing MCP client "${this.options.name}" before reconnect`,
+        error,
+      );
+    }
+  }
+
+  private async attachTransport(transport: Transport) {
+    await this.detachClient();
+    try {
+      await this.client.connect(transport, {});
+    } catch (error) {
+      if (!isReusableTransportError(error)) {
+        await this.detachClient();
+        throw error;
+      }
+      await this.detachClient();
+      await this.client.connect(transport, {});
+    }
+    this.transport = transport;
+  }
+
   async connectClient(forceRefresh: boolean, externalSignal: AbortSignal) {
     if (this.status === "disabled") {
       return;
     }
+
+    const previous = this.connectQueue.catch(() => undefined);
+    let releaseQueue: () => void = () => {};
+    const queueGate = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+    this.connectQueue = queueGate;
+    await previous;
+
+    try {
+      await this.establishClient(forceRefresh, externalSignal);
+    } finally {
+      releaseQueue();
+    }
+  }
+
+  private async establishClient(
+    forceRefresh: boolean,
+    externalSignal: AbortSignal,
+  ) {
     if (!forceRefresh) {
       // Already connected
       if (this.status === "connected") {
@@ -148,25 +233,7 @@ class MCPConnection {
     this.abortController.abort();
     this.abortController = new AbortController();
 
-    // currently support oauth for sse transports only
-    if (this.options.type === "sse") {
-      if (!this.options.requestOptions) {
-        this.options.requestOptions = {
-          headers: {},
-        };
-      }
-      const accessToken = await getOauthToken(
-        this.options.url,
-        this.extras?.ide!,
-      );
-      if (accessToken) {
-        this.isProtectedResource = true;
-        this.options.requestOptions.headers = {
-          ...this.options.requestOptions.headers,
-          Authorization: `Bearer ${accessToken}`,
-        };
-      }
-    }
+    const authProvider = await this.createOauthProvider();
 
     const vars = getTemplateVariables(JSON.stringify(this.options));
     const unrendered = vars.map((v) => {
@@ -218,63 +285,59 @@ Org-level secrets can only be used for MCP by Background Agents (https://docs.co
                 const transport = await this.constructStdioTransport(
                   this.options,
                 );
-                try {
-                  await this.client.connect(transport, {});
-                  this.transport = transport;
-                } catch (error) {
-                  // Allow the case where for whatever reason is already connected
-                  if (
-                    error instanceof Error &&
-                    error.message.startsWith(
-                      "StdioClientTransport already started",
-                    )
-                  ) {
-                    await this.client.close();
-                    await this.client.connect(transport);
-                    this.transport = transport;
-                  } else {
-                    throw error;
-                  }
-                }
+                await this.attachTransport(transport);
               } else {
                 // SSE/HTTP: if type isn't explicit: try http and fall back to sse
                 if (this.options.type === "sse") {
-                  const transport = this.constructSseTransport(this.options);
-                  await this.client.connect(transport, {});
-                  this.transport = transport;
+                  const transport = this.constructSseTransport(
+                    this.options,
+                    authProvider,
+                  );
+                  await this.attachTransport(transport);
                 } else if (this.options.type === "streamable-http") {
-                  const transport = this.constructHttpTransport(this.options);
-                  await this.client.connect(transport, {});
-                  this.transport = transport;
+                  const transport = this.constructHttpTransport(
+                    this.options,
+                    authProvider,
+                  );
+                  await this.attachTransport(transport);
                 } else if (this.options.type === "websocket") {
                   const transport = this.constructWebsocketTransport(
                     this.options,
                   );
-                  await this.client.connect(transport, {});
-                  this.transport = transport;
+                  await this.attachTransport(transport);
                 } else if (this.options.type) {
                   throw new Error(
                     `Unsupported transport type: ${this.options.type}`,
                   );
                 } else {
                   try {
-                    const transport = this.constructHttpTransport({
-                      ...this.options,
-                      type: "streamable-http",
-                    });
-                    await this.client.connect(transport, {});
-                    this.transport = transport;
-                  } catch (e) {
-                    try {
-                      const transport = this.constructSseTransport({
+                    const transport = this.constructHttpTransport(
+                      {
                         ...this.options,
-                        type: "sse",
-                      });
-                      await this.client.connect(transport, {});
-                      this.transport = transport;
-                    } catch (e) {
+                        type: "streamable-http",
+                      },
+                      authProvider,
+                    );
+                    await this.attachTransport(transport);
+                  } catch (httpError) {
+                    if (is401Error(httpError)) {
+                      throw httpError;
+                    }
+                    try {
+                      const transport = this.constructSseTransport(
+                        {
+                          ...this.options,
+                          type: "sse",
+                        },
+                        authProvider,
+                      );
+                      await this.attachTransport(transport);
+                    } catch (sseError) {
+                      if (is401Error(sseError)) {
+                        throw sseError;
+                      }
                       throw new Error(
-                        `MCP config with URL and no type specified failed both SSE and HTTP connection: ${e instanceof Error ? e.message : String(e)}`,
+                        `MCP config with URL and no type specified failed both SSE and HTTP connection: ${sseError instanceof Error ? sseError.message : String(sseError)}`,
                       );
                     }
                   }
@@ -491,6 +554,39 @@ Org-level secrets can only be used for MCP by Background Agents (https://docs.co
     return cwd;
   }
 
+  private async createOauthProvider(): Promise<
+    MCPConnectionOauthProvider | undefined
+  > {
+    if (!this.extras?.ide) {
+      return undefined;
+    }
+    if (!("url" in this.options) || !this.options.url) {
+      return undefined;
+    }
+    if (this.options.type === "websocket" || "command" in this.options) {
+      return undefined;
+    }
+    if (
+      this.options.type &&
+      this.options.type !== "sse" &&
+      this.options.type !== "streamable-http"
+    ) {
+      return undefined;
+    }
+
+    const provider = new MCPConnectionOauthProvider(
+      this.options.url,
+      this.extras.ide,
+      this.options.id,
+    );
+    await provider.ensureRedirectUrl();
+    const tokens = await provider.tokens();
+    if (tokens?.access_token) {
+      this.isProtectedResource = true;
+    }
+    return provider;
+  }
+
   private constructWebsocketTransport(
     options: InternalWebsocketMcpOptions,
   ): WebSocketClientTransport {
@@ -499,25 +595,27 @@ Org-level secrets can only be used for MCP by Background Agents (https://docs.co
 
   private constructSseTransport(
     options: InternalSseMcpOptions,
+    authProvider?: OAuthClientProvider,
   ): SSEClientTransport {
     const sseAgent =
       options.requestOptions?.verifySsl === false
         ? new HttpsAgent({ rejectUnauthorized: false })
         : undefined;
 
-    // Merge apiKey into headers if provided
+    // Explicit apiKey / Authorization wins over the stored OAuth token.
     const headers = {
       ...options.requestOptions?.headers,
       ...(options.apiKey && { Authorization: `Bearer ${options.apiKey}` }),
     };
 
     return new SSEClientTransport(new URL(options.url), {
+      authProvider,
       eventSourceInit: {
         fetch: (input, init) =>
           fetch(input, {
             ...init,
             headers: {
-              ...init?.headers,
+              ...headersToRecord(init?.headers),
               ...headers,
             },
             ...(sseAgent && { agent: sseAgent }),
@@ -532,6 +630,7 @@ Org-level secrets can only be used for MCP by Background Agents (https://docs.co
 
   private constructHttpTransport(
     options: InternalStreamableHttpMcpOptions,
+    authProvider?: OAuthClientProvider,
   ): StreamableHTTPClientTransport {
     const { url, requestOptions } = options;
     const streamableAgent =
@@ -539,13 +638,14 @@ Org-level secrets can only be used for MCP by Background Agents (https://docs.co
         ? new HttpsAgent({ rejectUnauthorized: false })
         : undefined;
 
-    // Merge apiKey into headers if provided
+    // Explicit apiKey / Authorization wins over the stored OAuth token.
     const headers = {
       ...requestOptions?.headers,
       ...(options.apiKey && { Authorization: `Bearer ${options.apiKey}` }),
     };
 
     return new StreamableHTTPClientTransport(new URL(url), {
+      authProvider,
       requestInit: {
         headers,
         ...(streamableAgent && { agent: streamableAgent }),
