@@ -137,6 +137,96 @@ describe("sessionSlice streamUpdate", () => {
     });
   });
 
+  describe("Closing think tag without an opening tag", () => {
+    it("treats text before </think> as collapsed reasoning and keeps the answer", () => {
+      const initialState = createInitialState();
+      const action = {
+        type: "session/streamUpdate",
+        payload: [
+          {
+            role: "assistant" as const,
+            content:
+              "The JSON is valid and complete.\nLet me remove the temp script.</think>JSON валиден и полон. Уберу временный скрипт.",
+          },
+        ],
+      };
+
+      const newState = sessionSlice.reducer(initialState, action);
+
+      expect(newState.history).toHaveLength(2);
+      expect(newState.history[1].reasoning?.text).toBe(
+        "The JSON is valid and complete.\nLet me remove the temp script.",
+      );
+      expect(newState.history[1].reasoning?.active).toBe(false);
+      expect(newState.history[1].message.role).toBe("assistant");
+      expect(newState.history[1].message.content).toBe(
+        "JSON валиден и полон. Уберу временный скрипт.",
+      );
+      expect(newState.history[1].message.content).not.toContain("</think>");
+      expect(newState.history[1].message.content).not.toContain(
+        "Let me remove the temp script.",
+      );
+    });
+
+    it("moves streamed text into reasoning when the close tag arrives later", () => {
+      const initialState = createInitialState();
+      initialState.history.push({
+        message: {
+          role: "assistant",
+          content: "",
+          id: "assistant-message",
+        },
+        contextItems: [],
+      });
+
+      const action = {
+        type: "session/streamUpdate",
+        payload: [
+          { role: "assistant" as const, content: "The JSON is valid. " },
+          { role: "assistant" as const, content: "Let me remove the script." },
+          { role: "assistant" as const, content: "</thi" },
+          { role: "assistant" as const, content: "nk>JSON валиден." },
+          { role: "assistant" as const, content: " Уберу скрипт." },
+        ],
+      };
+
+      const newState = sessionSlice.reducer(initialState, action);
+
+      expect(newState.history).toHaveLength(2);
+      expect(newState.history[1].reasoning?.text).toBe(
+        "The JSON is valid. Let me remove the script.",
+      );
+      expect(newState.history[1].reasoning?.active).toBe(false);
+      expect(newState.history[1].message.content).toBe(
+        "JSON валиден. Уберу скрипт.",
+      );
+    });
+
+    it("leaves a later </think> in the answer after reasoning is closed", () => {
+      const initialState = createInitialState();
+      const action = {
+        type: "session/streamUpdate",
+        payload: [
+          {
+            role: "assistant" as const,
+            content: "hidden</think>see ",
+          },
+          {
+            role: "assistant" as const,
+            content: "</think> in the answer",
+          },
+        ],
+      };
+
+      const newState = sessionSlice.reducer(initialState, action);
+
+      expect(newState.history[1].reasoning?.text).toBe("hidden");
+      expect(newState.history[1].message.content).toBe(
+        "see </think> in the answer",
+      );
+    });
+  });
+
   describe("Tool Call With Response", () => {
     it("should handle tool call followed by tool response and assistant message", () => {
       const initialState = createInitialState();

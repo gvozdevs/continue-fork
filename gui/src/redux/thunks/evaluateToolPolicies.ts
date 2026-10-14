@@ -4,6 +4,9 @@ import { POLICY_BLOCKED } from "core/tools/toolCallValidity";
 import { IIdeMessenger } from "../../context/IdeMessenger";
 import {
   AutoRunSettings,
+  DEFAULT_AUTO_RUN_COMMANDS,
+  DEFAULT_DANGEROUS_COMMANDS,
+  getTerminalCommandFromArgs,
   isMcpTool,
   isTerminalCommandTool,
   resolveAutoRunPolicy,
@@ -20,8 +23,8 @@ interface EvaluatedPolicy {
 }
 
 const DEFAULT_AUTO_RUN: AutoRunSettings = {
-  autoRunSafeTerminalCommands: true,
-  autoRunDangerousTerminalCommands: false,
+  autoRunCommands: [...DEFAULT_AUTO_RUN_COMMANDS],
+  dangerousCommands: [...DEFAULT_DANGEROUS_COMMANDS],
   autoRunMcpTools: false,
 };
 
@@ -41,9 +44,7 @@ async function evaluateToolPolicy(
     toolCallState.tool ??
     activeTools.find((candidate) => candidate.function.name === toolName);
   const basePolicy =
-    toolPolicies[toolName] ??
-    tool?.defaultToolPolicy ??
-    DEFAULT_TOOL_SETTING;
+    toolPolicies[toolName] ?? tool?.defaultToolPolicy ?? DEFAULT_TOOL_SETTING;
 
   // File writes skip the Accept click unless the tool is explicitly disabled.
   if (basePolicy !== "disabled" && shouldSkipToolPermissionPrompt(toolName)) {
@@ -65,6 +66,11 @@ async function evaluateToolPolicy(
 
   const dynamicPolicy = result.content.policy;
   const displayValue = result.content.displayValue;
+  const commandText = isTerminalCommandTool(toolName)
+    ? getTerminalCommandFromArgs(
+        toolCallState.processedArgs ?? toolCallState.parsedArgs,
+      )
+    : undefined;
 
   const resolvedPolicy = resolveAutoRunPolicy(
     toolName,
@@ -72,6 +78,7 @@ async function evaluateToolPolicy(
     basePolicy,
     dynamicPolicy,
     autoRun,
+    commandText,
   );
 
   if (resolvedPolicy === "disabled") {

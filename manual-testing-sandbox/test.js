@@ -7,16 +7,17 @@ class Calculator {
     this.result += number;
     return this;
   }
-  subtract(number) {
+  sub(number) {
+    this.result -= number;
     return this;
   }
 
-  multiply(number) {
+  mul(number) {
     this.result *= number;
     return this;
   }
 
-  divide(number) {
+  div(number) {
     if (number === 0) {
       throw new Error("Cannot divide by zero");
     }
@@ -24,11 +25,11 @@ class Calculator {
     return this;
   }
 
-  getResult() {
+  get() {
     return this.result;
   }
 
-  reset() {
+  clear() {
     this.result = 0;
     return this;
   }

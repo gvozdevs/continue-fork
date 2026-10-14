@@ -1,5 +1,9 @@
 import { ToolCallState } from "core";
 import { UnifiedTerminalCommand } from "../../../components/UnifiedTerminal/UnifiedTerminal";
+import {
+  extractTerminalBaseCommand,
+  getTerminalCommandFromArgs,
+} from "../../../util/toolCallState";
 
 interface RunTerminalCommandToolCallProps {
   command: string;
@@ -19,6 +23,13 @@ export function RunTerminalCommand(props: RunTerminalCommandToolCallProps) {
   const statusMessage = outputItem?.status || "";
   const isRunning = props.toolCallState.status === "calling";
 
+  const commandText =
+    props.command ||
+    getTerminalCommandFromArgs(
+      props.toolCallState.processedArgs ?? props.toolCallState.parsedArgs,
+    );
+  const commandType = extractTerminalBaseCommand(commandText) ?? "shell";
+
   // Determine status type
   let statusType: "running" | "completed" | "failed" | "background" =
     "completed";
@@ -32,12 +43,14 @@ export function RunTerminalCommand(props: RunTerminalCommandToolCallProps) {
 
   return (
     <UnifiedTerminalCommand
-      command={props.command}
+      command={commandText}
+      commandType={commandType}
       output={terminalContent}
       status={statusType}
       statusMessage={statusMessage}
       toolCallState={props.toolCallState}
       toolCallId={props.toolCallId}
+      displayLines={2}
     />
   );
 }

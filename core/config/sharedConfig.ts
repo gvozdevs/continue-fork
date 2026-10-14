@@ -37,6 +37,9 @@ export const sharedConfigSchema = z
     staleHistoryTokenLimit: z.number().min(0).max(2_000_000),
     logLlmTraffic: z.boolean(),
     readFileMaxTokens: z.number().min(0).max(2_000_000),
+    agentSystemMessage: z.string(),
+    planSystemMessage: z.string(),
+    userLanguage: z.string(),
 
     // `tabAutocompleteOptions` in `ContinueConfig`
     useAutocompleteCache: z.boolean(),
@@ -177,6 +180,15 @@ export function modifyAnyConfigWithSharedConfig<
   }
   if (sharedConfig.readFileMaxTokens !== undefined) {
     configCopy.ui.readFileMaxTokens = sharedConfig.readFileMaxTokens;
+  }
+  if (sharedConfig.agentSystemMessage !== undefined) {
+    configCopy.ui.agentSystemMessage = sharedConfig.agentSystemMessage;
+  }
+  if (sharedConfig.planSystemMessage !== undefined) {
+    configCopy.ui.planSystemMessage = sharedConfig.planSystemMessage;
+  }
+  if (sharedConfig.userLanguage !== undefined) {
+    configCopy.ui.userLanguage = sharedConfig.userLanguage;
   }
 
   configCopy.experimental = {

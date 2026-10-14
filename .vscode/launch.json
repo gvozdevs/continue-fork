@@ -27,6 +27,22 @@
       }
     },
     {
+      // type extensionHost always opens Cursor. This attaches to a VS Code
+      // process started by vscode-extension:launch-vscode.
+      "name": "Launch extension (VS Code)",
+      "type": "node",
+      "request": "attach",
+      "address": "127.0.0.1",
+      "port": 5870,
+      "restart": false,
+      "timeout": 120000,
+      "sourceMaps": true,
+      "outFiles": ["${workspaceFolder}/extensions/vscode/out/**/*.js"],
+      "skipFiles": ["<node_internals>/**"],
+      "cwd": "${workspaceFolder}/extensions/vscode",
+      "preLaunchTask": "vscode-extension:launch-vscode"
+    },
+    {
       "type": "node",
       "request": "launch",
       "name": "Core Binary",

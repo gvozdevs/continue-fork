@@ -54,10 +54,7 @@ import {
   selectPendingToolCalls,
 } from "../selectors/selectToolCalls";
 import { getBaseSystemMessage } from "../util/getBaseSystemMessage";
-import {
-  autoCompactHistoryIfNeeded,
-  staleHistoryTokens,
-} from "./autoCompact";
+import { autoCompactHistoryIfNeeded, staleHistoryTokens } from "./autoCompact";
 import { callToolById } from "./callToolById";
 import { evaluateToolPolicies } from "./evaluateToolPolicies";
 import { preprocessToolCalls } from "./preprocessToolCallArgs";
@@ -237,6 +234,12 @@ export const streamNormalInput = createAsyncThunk<
       state.session.mode,
       selectedChatModel,
       activeTools,
+      {
+        agentSystemMessage: state.config.config.ui?.agentSystemMessage,
+        planSystemMessage: state.config.config.ui?.planSystemMessage,
+        cwd: window.workspacePaths?.[0],
+        language: state.config.config.ui?.userLanguage || "Russian",
+      },
     );
 
     const systemMessage = systemToolsFramework
@@ -513,9 +516,8 @@ export const streamNormalInput = createAsyncThunk<
       generatedCalls3,
       toolPolicies,
       {
-        autoRunSafeTerminalCommands: state3.ui.autoRunTerminalCommands,
-        autoRunDangerousTerminalCommands:
-          state3.ui.autoRunDangerousTerminalCommands,
+        autoRunCommands: state3.ui.autoRunCommands,
+        dangerousCommands: state3.ui.dangerousCommands,
         autoRunMcpTools: state3.ui.autoRunMcpTools,
       },
     );
@@ -540,9 +542,7 @@ export const streamNormalInput = createAsyncThunk<
         dispatch(clearStalledAssistantReply());
         dispatch(setToolLoop({ ...loop, phraseNudgeSent: true }));
         dispatch(appendLoopResume(PHRASE_LOOP_RESUME));
-        unwrapResult(
-          await dispatch(streamNormalInput({ depth: depth + 1 })),
-        );
+        unwrapResult(await dispatch(streamNormalInput({ depth: depth + 1 })));
       } else {
         dispatch(setInactive());
       }

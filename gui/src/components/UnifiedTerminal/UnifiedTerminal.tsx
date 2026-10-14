@@ -9,7 +9,6 @@ import { moveTerminalProcessToBackground } from "../../redux/thunks/moveTerminal
 import { getFontSize } from "../../util";
 import { CopyButton } from "../StyledMarkdownPreview/StepContainerPreToolbar/CopyButton";
 import { RunInTerminalButton } from "../StyledMarkdownPreview/StepContainerPreToolbar/RunInTerminalButton";
-import { ButtonContent, SpoilerButton } from "../ui/SpoilerButton";
 
 const blinkCursor = keyframes`
   0%, 50% { opacity: 1; }
@@ -89,10 +88,11 @@ const TerminalContent = styled.div`
   pre {
     white-space: pre-wrap;
     max-width: calc(100vw - 24px);
-    overflow-x: scroll;
+    overflow-x: auto;
     overflow-y: hidden;
-    padding: 8px;
+    padding: 0;
     margin: 0;
+    background: transparent;
   }
 
   code {
@@ -100,19 +100,11 @@ const TerminalContent = styled.div`
       display: none;
     }
     word-wrap: break-word;
-    border-radius: 0.5rem;
-    background-color: var(--editor-background);
+    background: transparent;
     font-size: ${getFontSize() - 2}px;
     font-family:
       ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono",
       Menlo, monospace;
-  }
-
-  code:not(pre > code) {
-    font-family:
-      ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono",
-      Menlo, monospace;
-    color: var(--input-placeholder);
   }
 `;
 
@@ -260,89 +252,75 @@ function StatusIcon({ status }: StatusIconProps) {
 
   return (
     <span
-      className={`mr-2 h-2 w-2 rounded-full ${getStatusColor()} ${
+      className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${getStatusColor()} ${
         status === "running" ? "animate-pulse" : ""
       }`}
     />
   );
 }
 
-interface IndicatorOnlyProps {
-  hiddenLinesCount: number;
-  isExpanded: boolean;
-  onToggle: () => void;
-}
-
-function IndicatorOnly({
+function OutputToggle({
   hiddenLinesCount,
   isExpanded,
   onToggle,
-}: IndicatorOnlyProps) {
-  return (
-    <div className="flex justify-center">
-      <SpoilerButton onClick={onToggle}>
-        <ButtonContent>
-          <span>
-            {isExpanded ? "Collapse" : `+${hiddenLinesCount} more lines`}
-          </span>
-          <ChevronDownIcon
-            className={`h-3 w-3 ${isExpanded ? "rotate-180" : ""}`}
-          />
-        </ButtonContent>
-      </SpoilerButton>
-    </div>
-  );
-}
-
-interface CollapsibleOutputContainerProps {
-  limitedContent: string;
-  fullContent: string;
+}: {
+  hiddenLinesCount: number;
   isExpanded: boolean;
   onToggle: () => void;
-}
-
-function CollapsibleOutputContainer({
-  limitedContent,
-  fullContent,
-  isExpanded,
-  onToggle,
-}: CollapsibleOutputContainerProps) {
+}) {
   return (
-    <div className="relative">
-      {/* Gradient overlay when collapsed */}
-      {!isExpanded && (
-        <div className="from-editor pointer-events-none absolute left-0 right-0 top-0 z-[5] h-[100px] rounded-t-md bg-gradient-to-b to-transparent" />
-      )}
-
-      <div onClick={onToggle} className="cursor-pointer">
-        <div>
-          <AnsiRenderer linkify>
-            {isExpanded ? fullContent : limitedContent}
-          </AnsiRenderer>
-        </div>
-      </div>
-    </div>
+    <button
+      type="button"
+      onClick={onToggle}
+      className="text-description hover:text-foreground mt-1.5 inline-flex cursor-pointer items-center gap-1 border-none bg-transparent p-0 text-xs font-medium underline-offset-2 hover:underline"
+      data-testid="terminal-output-toggle"
+    >
+      <span>
+        {isExpanded ? "Show less" : `Show ${hiddenLinesCount} more lines`}
+      </span>
+      <ChevronDownIcon
+        className={`h-3.5 w-3.5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+      />
+    </button>
   );
 }
 
 interface UnifiedTerminalCommandProps {
   command: string;
+  /** Short command type label, e.g. "git" / "npm". Defaults to first token. */
+  commandType?: string;
   output?: string;
   status?: "running" | "completed" | "failed" | "background";
   statusMessage?: string;
   toolCallState?: ToolCallState;
   toolCallId?: string;
+  /** Collapsed output shows the first N lines, then ellipsis. */
   displayLines?: number;
+}
+
+function inferCommandType(command: string): string {
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return "shell";
+  }
+  const tokens = trimmed.split(/\s+/);
+  let index = 0;
+  while (index < tokens.length && /^[A-Za-z_][\w]*=.*/.test(tokens[index])) {
+    index++;
+  }
+  const raw = tokens[index] ?? "shell";
+  return (raw.split(/[/\\]/).pop() ?? raw).toLowerCase() || "shell";
 }
 
 export function UnifiedTerminalCommand({
   command,
+  commandType,
   output = "",
   status = "completed",
   statusMessage = "",
   toolCallState,
   toolCallId,
-  displayLines = 15,
+  displayLines = 2,
 }: UnifiedTerminalCommandProps) {
   const dispatch = useAppDispatch();
   const [isExpanded, setIsExpanded] = useState(true);
@@ -351,8 +329,9 @@ export function UnifiedTerminalCommand({
   // Determine running state
   const isRunning = toolCallState?.status === "calling" || status === "running";
   const hasOutput = output.length > 0;
+  const resolvedType = commandType || inferCommandType(command);
 
-  // Process terminal content for line limiting
+  // Process terminal content for line limiting — first N lines when collapsed
   const processedTerminalContent = useMemo(() => {
     if (!output) {
       return {
@@ -368,10 +347,10 @@ export function UnifiedTerminalCommand({
     const totalLines = lines.length;
 
     if (totalLines > displayLines) {
-      const lastLines = lines.slice(-displayLines);
+      const firstLines = lines.slice(0, displayLines);
       return {
         fullContent: output,
-        limitedContent: lastLines.join("\n"),
+        limitedContent: `${firstLines.join("\n")}\n…`,
         totalLines,
         isLimited: true,
         hiddenLinesCount: totalLines - displayLines,
@@ -416,118 +395,109 @@ export function UnifiedTerminalCommand({
     return content;
   }, [command, output, hasOutput]);
 
+  const showFullOutput = outputExpanded || isRunning;
+  const outputText = showFullOutput
+    ? processedTerminalContent.fullContent
+    : processedTerminalContent.limitedContent;
+
   return (
     <StyledTerminalContainer
       fontSize={getFontSize()}
-      className="mx-2 mb-4"
+      className="mx-2 mb-3"
       data-testid="terminal-container"
     >
-      <div className="outline-command-border rounded-default bg-editor !my-2 flex min-w-0 flex-col outline outline-1">
-        {/* Toolbar */}
-        <div
-          className={`find-widget-skip bg-editor sticky -top-2 z-10 m-0 flex items-center justify-between gap-3 px-1.5 py-1 ${
-            isExpanded
-              ? "rounded-t-default border-command-border border-b"
-              : "rounded-default"
-          }`}
+      <div className="border-border bg-input/40 my-1.5 flex min-w-0 flex-col overflow-hidden rounded-lg border border-solid">
+        {/* Header */}
+        <button
+          type="button"
+          className="hover:bg-list-hover find-widget-skip m-0 flex w-full cursor-pointer items-center justify-between gap-2 border-none bg-transparent px-2.5 py-1.5 text-left"
           style={{ fontSize: `${getFontSize() - 2}px` }}
+          onClick={() => setIsExpanded(!isExpanded)}
+          aria-expanded={isExpanded}
         >
-          <div className="flex max-w-[50%] flex-row items-center">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <ChevronDownIcon
-              onClick={() => setIsExpanded(!isExpanded)}
-              className={`text-description h-3.5 w-3.5 flex-shrink-0 cursor-pointer hover:brightness-125 ${
+              className={`text-description h-3.5 w-3.5 flex-shrink-0 transition-transform ${
                 isExpanded ? "rotate-0" : "-rotate-90"
               }`}
             />
-            <span className="text-description ml-2 select-none">Terminal</span>
+            <StatusIcon status={statusType} />
+            <span
+              className="text-foreground truncate font-mono text-xs font-medium"
+              data-testid="terminal-command-type"
+            >
+              {resolvedType}
+            </span>
+            {isRunning ? (
+              <span className="text-description-muted text-xs">Running…</span>
+            ) : null}
           </div>
 
-          <div className="flex items-center gap-2.5">
-            {!isRunning && (
-              <div className="xs:flex hidden items-center gap-2.5">
-                <CopyButton text={copyContent} />
-                <RunInTerminalButton command={command} />
-              </div>
-            )}
-          </div>
-        </div>
+          {!isRunning && (
+            <div
+              className="xs:flex hidden items-center gap-1"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CopyButton text={copyContent} />
+              <RunInTerminalButton command={command} />
+            </div>
+          )}
+        </button>
 
-        {/* Content */}
         {isExpanded && (
-          <TerminalContent>
-            <pre className="bg-editor">
-              <code>
-                {/* Command is always visible */}
-                <div className="text-terminal pb-2">{command}</div>
-
-                {/* Running state with cursor */}
-                {isRunning && !hasOutput && (
-                  <div className="mt-1 flex items-center gap-1">
-                    <BlinkingCursor />
+          <div className="border-border border-0 border-t border-solid px-2.5 py-2">
+            <TerminalContent>
+              <pre>
+                <code>
+                  <div
+                    className="text-foreground whitespace-pre-wrap break-all font-mono text-xs opacity-90"
+                    data-testid="terminal-command"
+                  >
+                    <span className="text-description-muted select-none">
+                      ${" "}
+                    </span>
+                    {command}
                   </div>
-                )}
 
-                {/* Output with optional collapsible functionality */}
-                {hasOutput && (
-                  <div className="mt-1">
-                    {/* Expand/Collapse indicator positioned between command and output */}
-                    {processedTerminalContent.isLimited && (
-                      <IndicatorOnly
-                        hiddenLinesCount={
-                          processedTerminalContent.hiddenLinesCount
-                        }
-                        isExpanded={outputExpanded}
-                        onToggle={() => setOutputExpanded(!outputExpanded)}
-                      />
-                    )}
+                  {isRunning && !hasOutput && (
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <BlinkingCursor />
+                    </div>
+                  )}
 
-                    <div className="pt-2">
-                      {processedTerminalContent.isLimited ? (
-                        <CollapsibleOutputContainer
-                          limitedContent={
-                            processedTerminalContent.limitedContent
-                          }
-                          fullContent={processedTerminalContent.fullContent}
-                          isExpanded={outputExpanded}
-                          onToggle={() => setOutputExpanded(!outputExpanded)}
-                        />
-                      ) : (
+                  {hasOutput && (
+                    <div className="text-description mt-2 font-mono text-[11px] leading-relaxed">
+                      <AnsiRenderer linkify>{outputText}</AnsiRenderer>
+                      {processedTerminalContent.isLimited && !isRunning && (
                         <div>
-                          <AnsiRenderer linkify>
-                            {processedTerminalContent.fullContent}
-                          </AnsiRenderer>
+                          <OutputToggle
+                            hiddenLinesCount={
+                              processedTerminalContent.hiddenLinesCount
+                            }
+                            isExpanded={outputExpanded}
+                            onToggle={() => setOutputExpanded(!outputExpanded)}
+                          />
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
-              </code>
-            </pre>
-          </TerminalContent>
-        )}
+                  )}
+                </code>
+              </pre>
+            </TerminalContent>
 
-        {/* Status information */}
-        {(statusMessage || isRunning) && (
-          <div
-            className="text-description flex items-center px-2 pb-2 pt-2 text-xs"
-            style={{
-              borderTop:
-                "1px solid var(--vscode-commandCenter-inactiveBorder, #555555)",
-            }}
-          >
-            <StatusIcon status={statusType} />
-            {isRunning ? "Running" : statusMessage}
-            {isRunning && toolCallId && (
-              <a
-                href="#"
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleMoveToBackground();
-                }}
-                className="text-link ml-3 cursor-pointer text-xs no-underline hover:underline"
-              >
-                Move to background
-              </a>
+            {(statusMessage || (isRunning && toolCallId)) && (
+              <div className="text-description mt-2 flex items-center text-[11px]">
+                {!isRunning && statusMessage ? statusMessage : null}
+                {isRunning && toolCallId && (
+                  <button
+                    type="button"
+                    onClick={handleMoveToBackground}
+                    className="text-link cursor-pointer border-none bg-transparent p-0 text-[11px] underline-offset-2 hover:underline"
+                  >
+                    Move to background
+                  </button>
+                )}
+              </div>
             )}
           </div>
         )}

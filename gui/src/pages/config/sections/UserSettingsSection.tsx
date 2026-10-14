@@ -2,6 +2,11 @@ import {
   SharedConfigSchema,
   modifyAnyConfigWithSharedConfig,
 } from "core/config/sharedConfig";
+import {
+  DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE,
+  DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE,
+  SYSTEM_MESSAGE_PLACEHOLDERS,
+} from "core/llm/defaultSystemMessages";
 import { DEFAULT_READ_FILE_MAX_TOKENS } from "core/tools/readFileMaxTokens";
 import { staleHistoryTokenLimit } from "core/util/autoCompact";
 import { useContext, useEffect, useState } from "react";
@@ -59,6 +64,23 @@ export function UserSettingsSection() {
   );
   const readFileMaxTokens =
     config.ui?.readFileMaxTokens ?? DEFAULT_READ_FILE_MAX_TOKENS;
+  const savedAgentSystemMessage =
+    config.ui?.agentSystemMessage ?? DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE;
+  const savedPlanSystemMessage =
+    config.ui?.planSystemMessage ?? DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE;
+  const savedUserLanguage = config.ui?.userLanguage ?? "Russian";
+  const [agentSystemMessageDraft, setAgentSystemMessageDraft] = useState(
+    savedAgentSystemMessage,
+  );
+  const [planSystemMessageDraft, setPlanSystemMessageDraft] = useState(
+    savedPlanSystemMessage,
+  );
+  useEffect(() => {
+    setAgentSystemMessageDraft(savedAgentSystemMessage);
+  }, [savedAgentSystemMessage]);
+  useEffect(() => {
+    setPlanSystemMessageDraft(savedPlanSystemMessage);
+  }, [savedPlanSystemMessage]);
   const logLlmTraffic = config.ui?.logLlmTraffic === true;
   const codeWrap = config.ui?.codeWrap ?? false;
   const showChatScrollbar = config.ui?.showChatScrollbar ?? false;
@@ -100,6 +122,92 @@ export function UserSettingsSection() {
       <div className="flex flex-col">
         <ConfigHeader title="User Settings" />
         <div className="space-y-6">
+          {/* Agent / Plan system prompts */}
+          <div>
+            <ConfigHeader title="System prompts" variant="sm" />
+            <Card>
+              <div className="flex flex-col gap-4">
+                <UserSetting
+                  type="select"
+                  title="Response language"
+                  description='Preferred language for replies (Agent, Plan, and Chat). Injected as a "# Language" section.'
+                  value={
+                    savedUserLanguage === "English" ? "English" : "Russian"
+                  }
+                  options={[
+                    { label: "Русский", value: "Russian" },
+                    { label: "English", value: "English" },
+                  ]}
+                  onChange={(value) => handleUpdate({ userLanguage: value })}
+                />
+                <p className="m-0 text-xs text-gray-500">
+                  Separate templates for Agent and Plan modes. Placeholders are
+                  substituted at send time:{" "}
+                  {SYSTEM_MESSAGE_PLACEHOLDERS.join(", ")}. Leave tools as
+                  Continue built-ins (
+                  <code className="text-[11px]">read_file</code>,{" "}
+                  <code className="text-[11px]">grep_search</code>, …). Model
+                  YAML{" "}
+                  <code className="text-[11px]">
+                    chatOptions.baseAgentSystemMessage
+                  </code>{" "}
+                  / <code className="text-[11px]">basePlanSystemMessage</code>{" "}
+                  still override these when set.
+                </p>
+                <UserSetting
+                  type="textarea"
+                  title="Agent mode prompt"
+                  description="Used when the mode selector is Agent. Supports {{placeholders}}."
+                  value={agentSystemMessageDraft}
+                  rows={16}
+                  isDirty={agentSystemMessageDraft !== savedAgentSystemMessage}
+                  onChange={setAgentSystemMessageDraft}
+                  onSubmit={() =>
+                    handleUpdate({
+                      agentSystemMessage: agentSystemMessageDraft,
+                    })
+                  }
+                  onCancel={() =>
+                    setAgentSystemMessageDraft(savedAgentSystemMessage)
+                  }
+                  onReset={() => {
+                    setAgentSystemMessageDraft(
+                      DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE,
+                    );
+                    handleUpdate({
+                      agentSystemMessage: DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE,
+                    });
+                  }}
+                />
+                <UserSetting
+                  type="textarea"
+                  title="Plan mode prompt"
+                  description="Used when the mode selector is Plan. Read-only tools only; supports {{placeholders}}."
+                  value={planSystemMessageDraft}
+                  rows={14}
+                  isDirty={planSystemMessageDraft !== savedPlanSystemMessage}
+                  onChange={setPlanSystemMessageDraft}
+                  onSubmit={() =>
+                    handleUpdate({
+                      planSystemMessage: planSystemMessageDraft,
+                    })
+                  }
+                  onCancel={() =>
+                    setPlanSystemMessageDraft(savedPlanSystemMessage)
+                  }
+                  onReset={() => {
+                    setPlanSystemMessageDraft(
+                      DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE,
+                    );
+                    handleUpdate({
+                      planSystemMessage: DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE,
+                    });
+                  }}
+                />
+              </div>
+            </Card>
+          </div>
+
           {/* Chat Interface Settings */}
           <div>
             <ConfigHeader title="Chat" variant="sm" />

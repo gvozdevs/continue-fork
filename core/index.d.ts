@@ -1481,6 +1481,23 @@ export interface ContinueUIConfig {
    * Defaults to 25_000 and never exceeds half the model context.
    */
   readFileMaxTokens?: number;
+  /**
+   * Custom agent-mode system message template.
+   * Supports placeholders like {{environment}}, {{file_tool}}, {{cwd}}.
+   * Empty/undefined uses the built-in default.
+   */
+  agentSystemMessage?: string;
+  /**
+   * Custom plan-mode system message template.
+   * Supports placeholders like {{environment}}, {{cwd}}, {{ask_question}}.
+   * Empty/undefined uses the built-in default.
+   */
+  planSystemMessage?: string;
+  /**
+   * Preferred language for agent/plan/chat replies (e.g. "Russian", "English").
+   * Injected as a Claude-style # Language section when set.
+   */
+  userLanguage?: string;
 }
 
 export interface ContextMenuConfig {

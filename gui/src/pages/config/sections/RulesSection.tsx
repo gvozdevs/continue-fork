@@ -14,9 +14,9 @@ import {
   SlashCommandDescWithSource,
 } from "core";
 import {
-  DEFAULT_AGENT_SYSTEM_MESSAGE,
+  DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE,
   DEFAULT_CHAT_SYSTEM_MESSAGE,
-  DEFAULT_PLAN_SYSTEM_MESSAGE,
+  DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE,
 } from "core/llm/defaultSystemMessages";
 import { getRuleDisplayName } from "core/llm/rules/rules-utils";
 import { useContext, useMemo, useState } from "react";
@@ -385,13 +385,17 @@ function addDefaultSystemMessage(
     },
     agent: {
       customMessage: config.selectedModelByRole.chat?.baseAgentSystemMessage,
-      defaultMessage: DEFAULT_AGENT_SYSTEM_MESSAGE,
+      defaultMessage:
+        config.ui?.agentSystemMessage?.trim() ||
+        DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE,
       customSource: "model-options-agent" as RuleSource,
       defaultSource: "default-agent" as RuleSource,
     },
     plan: {
       customMessage: config.selectedModelByRole.chat?.basePlanSystemMessage,
-      defaultMessage: DEFAULT_PLAN_SYSTEM_MESSAGE,
+      defaultMessage:
+        config.ui?.planSystemMessage?.trim() ||
+        DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE,
       customSource: "model-options-plan" as RuleSource,
       defaultSource: "default-plan" as RuleSource,
     },

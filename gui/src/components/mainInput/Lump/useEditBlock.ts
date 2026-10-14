@@ -58,6 +58,8 @@ export function useOpenRule() {
       rule.source === "default-plan" ||
       rule.source === "default-agent"
     ) {
+      // Built-in templates live in defaultSystemMessages.ts;
+      // agent/plan can also be overridden under User Settings → System prompts.
       ideMessenger.post("openUrl", DEFAULT_SYSTEM_MESSAGES_URL);
     } else {
       editBlock(rule?.slug, rule?.sourceFile);

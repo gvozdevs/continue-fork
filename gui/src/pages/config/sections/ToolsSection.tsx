@@ -31,14 +31,12 @@ import { useAuth } from "../../../context/Auth";
 import { IdeMessengerContext } from "../../../context/IdeMessenger";
 import { useAppDispatch, useAppSelector } from "../../../redux/hooks";
 import { updateConfig } from "../../../redux/slices/configSlice";
-import {
-  setAutoRunDangerousTerminalCommands,
-  setAutoRunMcpTools,
-  setAutoRunTerminalCommands,
-} from "../../../redux/slices/uiSlice";
+import { setAutoRunMcpTools } from "../../../redux/slices/uiSlice";
 import { AllowedDirectoriesSetting } from "../components/AllowedDirectoriesSetting";
+import { AutoRunCommandsSetting } from "../components/AutoRunCommandsSetting";
 import { ConfigHeader } from "../components/ConfigHeader";
 import { ConfigRow } from "../components/ConfigRow";
+import { DangerousCommandsSetting } from "../components/DangerousCommandsSetting";
 import { ToolPoliciesGroup } from "../components/ToolPoliciesGroup";
 
 interface MCPServerStatusProps {
@@ -412,12 +410,6 @@ function MCPServerPreview({
 
 export function ToolsSection() {
   const dispatch = useAppDispatch();
-  const autoRunTerminalCommands = useAppSelector(
-    (state) => state.ui.autoRunTerminalCommands,
-  );
-  const autoRunDangerousTerminalCommands = useAppSelector(
-    (state) => state.ui.autoRunDangerousTerminalCommands,
-  );
   const autoRunMcpTools = useAppSelector((state) => state.ui.autoRunMcpTools);
   const availableTools = useAppSelector((state) => state.config.config.tools);
 
@@ -497,36 +489,8 @@ export function ToolsSection() {
       )}
       <div className="mb-4 space-y-6">
         <Card className="p-0">
-          <ConfigRow
-            title="Auto-run safe terminal commands"
-            description="Run typical safe shell commands such as ls, git status, and npm test without clicking Accept."
-          >
-            <ToggleSwitch
-              isToggled={autoRunTerminalCommands}
-              onToggle={() =>
-                dispatch(setAutoRunTerminalCommands(!autoRunTerminalCommands))
-              }
-              text=""
-              size={12}
-            />
-          </ConfigRow>
-          <ConfigRow
-            title="Auto-run dangerous terminal commands"
-            description="Run high-risk and destructive commands such as curl, sudo, and rm -rf without clicking Accept. Off by default."
-          >
-            <ToggleSwitch
-              isToggled={autoRunDangerousTerminalCommands}
-              onToggle={() =>
-                dispatch(
-                  setAutoRunDangerousTerminalCommands(
-                    !autoRunDangerousTerminalCommands,
-                  ),
-                )
-              }
-              text=""
-              size={12}
-            />
-          </ConfigRow>
+          <AutoRunCommandsSetting />
+          <DangerousCommandsSetting />
           <ConfigRow
             title="Auto-run MCP tools"
             description="Run tools from connected MCP servers without clicking Accept (Overrides all tool policies). Off by default."

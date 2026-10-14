@@ -7,6 +7,10 @@ import {
   OnboardingCardState,
 } from "../../components/OnboardingCard";
 import { getLocalStorage, LocalStorageKey } from "../../util/localStorage";
+import {
+  DEFAULT_AUTO_RUN_COMMANDS,
+  DEFAULT_DANGEROUS_COMMANDS,
+} from "../../util/toolCallState";
 
 export type RulePolicy = "on" | "off";
 
@@ -29,8 +33,10 @@ type UIState = {
   ruleSettings: RulePolicies;
   reasoningSettings: ReasoningSettings;
   ttsActive: boolean;
-  autoRunTerminalCommands: boolean;
-  autoRunDangerousTerminalCommands: boolean;
+  /** Base command names that auto-run for run_terminal_command (e.g. "ls", "git"). */
+  autoRunCommands: string[];
+  /** Base command names that always require confirmation (e.g. "sudo", "rm"). */
+  dangerousCommands: string[];
   autoRunMcpTools: boolean;
 };
 
@@ -52,10 +58,14 @@ export const DEFAULT_UI_SLICE: UIState = {
   },
   ruleSettings: {},
   reasoningSettings: {},
-  autoRunTerminalCommands: true,
-  autoRunDangerousTerminalCommands: false,
+  autoRunCommands: [...DEFAULT_AUTO_RUN_COMMANDS],
+  dangerousCommands: [...DEFAULT_DANGEROUS_COMMANDS],
   autoRunMcpTools: false,
 };
+
+function normalizeCommandName(command: string): string {
+  return command.trim().toLowerCase();
+}
 
 export const uiSlice = createSlice({
   name: "ui",
@@ -155,14 +165,90 @@ export const uiSlice = createSlice({
       state.reasoningSettings[action.payload.modelTitle] =
         action.payload.enabled;
     },
-    setAutoRunTerminalCommands: (state, action: PayloadAction<boolean>) => {
-      state.autoRunTerminalCommands = action.payload;
+    setAutoRunCommands: (state, action: PayloadAction<string[]>) => {
+      const seen = new Set<string>();
+      const next: string[] = [];
+      for (const entry of action.payload) {
+        const normalized = normalizeCommandName(entry);
+        if (!normalized || seen.has(normalized)) {
+          continue;
+        }
+        seen.add(normalized);
+        next.push(normalized);
+      }
+      state.autoRunCommands = next;
+      // Keep lists mutually exclusive.
+      state.dangerousCommands = state.dangerousCommands.filter(
+        (command) => !seen.has(command),
+      );
     },
-    setAutoRunDangerousTerminalCommands: (
-      state,
-      action: PayloadAction<boolean>,
-    ) => {
-      state.autoRunDangerousTerminalCommands = action.payload;
+    addAutoRunCommand: (state, action: PayloadAction<string>) => {
+      const normalized = normalizeCommandName(action.payload);
+      if (!normalized) {
+        return;
+      }
+      state.dangerousCommands = state.dangerousCommands.filter(
+        (command) => command !== normalized,
+      );
+      if (!state.autoRunCommands.includes(normalized)) {
+        state.autoRunCommands.push(normalized);
+      }
+    },
+    removeAutoRunCommand: (state, action: PayloadAction<string>) => {
+      const normalized = normalizeCommandName(action.payload);
+      state.autoRunCommands = state.autoRunCommands.filter(
+        (command) => command !== normalized,
+      );
+    },
+    setDangerousCommands: (state, action: PayloadAction<string[]>) => {
+      const seen = new Set<string>();
+      const next: string[] = [];
+      for (const entry of action.payload) {
+        const normalized = normalizeCommandName(entry);
+        if (!normalized || seen.has(normalized)) {
+          continue;
+        }
+        seen.add(normalized);
+        next.push(normalized);
+      }
+      state.dangerousCommands = next;
+      state.autoRunCommands = state.autoRunCommands.filter(
+        (command) => !seen.has(command),
+      );
+    },
+    addDangerousCommand: (state, action: PayloadAction<string>) => {
+      const normalized = normalizeCommandName(action.payload);
+      if (!normalized) {
+        return;
+      }
+      state.autoRunCommands = state.autoRunCommands.filter(
+        (command) => command !== normalized,
+      );
+      if (!state.dangerousCommands.includes(normalized)) {
+        state.dangerousCommands.push(normalized);
+      }
+    },
+    removeDangerousCommand: (state, action: PayloadAction<string>) => {
+      const normalized = normalizeCommandName(action.payload);
+      state.dangerousCommands = state.dangerousCommands.filter(
+        (command) => command !== normalized,
+      );
+    },
+    /**
+     * Execute and remember: promote a base command to auto-run and drop it
+     * from the dangerous list if present.
+     */
+    rememberAutoRunCommand: (state, action: PayloadAction<string>) => {
+      const normalized = normalizeCommandName(action.payload);
+      if (!normalized) {
+        return;
+      }
+      state.dangerousCommands = state.dangerousCommands.filter(
+        (command) => command !== normalized,
+      );
+      if (!state.autoRunCommands.includes(normalized)) {
+        state.autoRunCommands.push(normalized);
+      }
     },
     setAutoRunMcpTools: (state, action: PayloadAction<boolean>) => {
       state.autoRunMcpTools = action.payload;
@@ -184,8 +270,13 @@ export const {
   toggleRuleSetting,
   setTTSActive,
   setReasoningSetting,
-  setAutoRunTerminalCommands,
-  setAutoRunDangerousTerminalCommands,
+  setAutoRunCommands,
+  addAutoRunCommand,
+  removeAutoRunCommand,
+  setDangerousCommands,
+  addDangerousCommand,
+  removeDangerousCommand,
+  rememberAutoRunCommand,
   setAutoRunMcpTools,
 } = uiSlice.actions;
 

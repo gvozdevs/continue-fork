@@ -164,6 +164,7 @@ extensions/intellij/.idea/**
 
 extensions/intellij/bin
 extensions/.continue-debug/
+extensions/.vscode-debug-user/
 
 # intellij module library files
 *.iml

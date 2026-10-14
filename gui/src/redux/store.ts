@@ -57,13 +57,54 @@ const saveSubsetFilters = [
     "toolGroupSettings",
     "ruleSettings",
     "reasoningSettings",
-    "autoRunTerminalCommands",
-    "autoRunDangerousTerminalCommands",
+    "autoRunCommands",
+    "dangerousCommands",
     "autoRunMcpTools",
   ]),
   createFilter("indexing", []),
   createFilter("tabs", ["tabs"]),
   createFilter("profiles", ["preferencesByProfileId", "selectedProfileId"]),
+];
+
+const DEFAULT_MIGRATED_AUTO_RUN_COMMANDS = [
+  "ls",
+  "pwd",
+  "cat",
+  "echo",
+  "git",
+  "grep",
+  "find",
+  "head",
+  "tail",
+  "which",
+  "wc",
+  "npm",
+  "yarn",
+  "pnpm",
+];
+
+const DEFAULT_MIGRATED_DANGEROUS_COMMANDS = [
+  "wget",
+  "sudo",
+  "su",
+  "rm",
+  "dd",
+  "chmod",
+  "chown",
+  "ssh",
+  "scp",
+  "rsync",
+  "nc",
+  "netcat",
+  "eval",
+  "exec",
+  "kill",
+  "killall",
+  "pkill",
+  "reboot",
+  "shutdown",
+  "mkfs",
+  "iptables",
 ];
 
 const migrations: MigrationManifest = {
@@ -90,10 +131,34 @@ const migrations: MigrationManifest = {
       _persist: oldState?._persist,
     };
   },
+  "2": (state) => {
+    const next = state as any;
+    if (next?.ui) {
+      const {
+        autoRunTerminalCommands: _safe,
+        autoRunDangerousTerminalCommands: _dangerous,
+        ...uiRest
+      } = next.ui;
+      next.ui = {
+        ...uiRest,
+        autoRunCommands: Array.isArray(next.ui.autoRunCommands)
+          ? next.ui.autoRunCommands
+          : [...DEFAULT_MIGRATED_AUTO_RUN_COMMANDS],
+      };
+    }
+    return next;
+  },
+  "3": (state) => {
+    const next = state as any;
+    if (next?.ui && !Array.isArray(next.ui.dangerousCommands)) {
+      next.ui.dangerousCommands = [...DEFAULT_MIGRATED_DANGEROUS_COMMANDS];
+    }
+    return next;
+  },
 };
 
 const persistConfig = {
-  version: 1,
+  version: 3,
   key: "root",
   storage,
   transforms: [...saveSubsetFilters],

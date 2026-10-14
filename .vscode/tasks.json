@@ -313,6 +313,32 @@
       }
     },
     {
+      "label": "vscode-extension:launch-vscode",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/launch-vscode-debug.sh"],
+      "problemMatcher": [],
+      "presentation": {
+        "group": "dev-watchers",
+        "panel": "dedicated",
+        "reveal": "always",
+        "focus": false,
+        "close": true
+      }
+    },
+    {
+      "label": "vscode-extension:stop-vscode",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/scripts/launch-vscode-debug.sh", "stop"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "close": true
+      }
+    },
+    {
       "label": "cli:build",
       "type": "npm",
       "script": "build",

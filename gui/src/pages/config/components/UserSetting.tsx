@@ -52,11 +52,24 @@ interface InputUserSettingProps extends BaseUserSettingProps {
   isValid?: boolean;
 }
 
+interface TextareaUserSettingProps extends BaseUserSettingProps {
+  type: "textarea";
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  rows?: number;
+  onSubmit?: () => void;
+  onCancel?: () => void;
+  isDirty?: boolean;
+  onReset?: () => void;
+}
+
 type UserSettingProps =
   | ToggleUserSettingProps
   | NumberUserSettingProps
   | SelectUserSettingProps
-  | InputUserSettingProps;
+  | InputUserSettingProps
+  | TextareaUserSettingProps;
 
 export function UserSetting(props: UserSettingProps) {
   const { title, description, disabled = false } = props;
@@ -128,12 +141,12 @@ export function UserSetting(props: UserSettingProps) {
             onChange={props.onChange}
             disabled={disabled}
           >
-            <ListboxButton className="border-command-border !w-20 w-20 !flex-none justify-between !rounded-md px-2 py-1">
+            <ListboxButton className="border-command-border !w-auto !min-w-20 !flex-none justify-between !rounded-md px-2 py-1">
               {props.options.find((opt) => opt.value === props.value)?.label ||
                 props.value}
               <ChevronDownIcon className="h-3 w-3" />
             </ListboxButton>
-            <ListboxOptions className="!w-20 !min-w-0">
+            <ListboxOptions className="!w-auto !min-w-20">
               {props.options.map((option) => (
                 <ListboxOption key={option.value} value={option.value}>
                   {option.label}
@@ -203,13 +216,60 @@ export function UserSetting(props: UserSettingProps) {
           </div>
         );
 
+      case "textarea":
+        return (
+          <div className="flex flex-col gap-2">
+            <div
+              className={`border-command-border bg-vsc-input-background focus-within:border-border-focus focus-within:ring-border-focus flex w-full flex-col overflow-hidden rounded-md border border-solid focus-within:ring-1 ${
+                props.isDirty ? "outline outline-green-500" : ""
+              } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
+            >
+              <textarea
+                value={props.value}
+                onChange={(e) => props.onChange(e.target.value)}
+                placeholder={props.placeholder}
+                disabled={disabled}
+                rows={props.rows ?? 12}
+                spellCheck={false}
+                className="text-vsc-foreground min-h-[8rem] w-full resize-y border-none bg-inherit px-2 py-1.5 font-mono text-xs leading-relaxed outline-none ring-0 focus:border-none focus:outline-none focus:ring-0 disabled:cursor-not-allowed"
+              />
+            </div>
+            <div className="flex flex-row items-center justify-end gap-2">
+              {props.onReset && (
+                <button
+                  type="button"
+                  className="text-xs text-gray-400 hover:text-gray-200"
+                  onClick={props.onReset}
+                  disabled={disabled}
+                >
+                  Reset to default
+                </button>
+              )}
+              {props.isDirty && props.onSubmit && (
+                <>
+                  <ToolTip content="Save">
+                    <div onClick={props.onSubmit} className="cursor-pointer">
+                      <CheckIcon className="h-4 w-4 text-green-500 hover:opacity-80" />
+                    </div>
+                  </ToolTip>
+                  <ToolTip content="Cancel">
+                    <div onClick={props.onCancel} className="cursor-pointer">
+                      <XMarkIcon className="h-4 w-4 text-red-500 hover:opacity-80" />
+                    </div>
+                  </ToolTip>
+                </>
+              )}
+            </div>
+          </div>
+        );
+
       default:
         return null;
     }
   };
 
-  // Use vertical layout for input types, horizontal for others
-  const isInputType = props.type === "input";
+  // Use vertical layout for input/textarea types, horizontal for others
+  const isInputType = props.type === "input" || props.type === "textarea";
 
   if (isInputType) {
     return (

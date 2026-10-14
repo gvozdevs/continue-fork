@@ -48,13 +48,82 @@ This included removing anonymous telemetry, pulling out authentication, squashin
 
 This fork lets the IDE extension apply code edits and create files without clicking Accept.
 
-Terminal and MCP auto-run are separate toggles in Tools (and in the chat toolbar):
+Terminal and MCP auto-run are configured in Tools:
 
-- **Auto-run safe terminal commands** (on by default) — typical commands such as `ls`, `git status`, and `npm test` run without confirmation. Turn it off to require Accept even for those.
-- **Auto-run dangerous terminal commands** (off by default) — high-risk and destructive commands such as `curl`, `sudo`, and `rm -rf` also run without Accept. Leave it off to keep Ask First and the security block list.
+- **Auto-run commands** — base command names (e.g. `ls`, `git`) that run without confirmation. Chains require every segment to match; `find -exec` / `-delete` still asks.
+- **Dangerous commands** — base command names (e.g. `sudo`, `rm`, `wget`) that always require confirmation. **Execute and remember** removes the command from this list and adds it to Auto-run commands.
 - **Auto-run MCP tools** (off by default) — tools from connected MCP servers run without Accept.
 
 A tool that is disabled in tool policies still never runs.
+
+## Local build and run
+
+The checkout does not include built IDE extensions. Activating Continue before a build fails with:
+
+```text
+Cannot find module '.../extensions/vscode/out/extension.js'
+```
+
+### Prerequisites
+
+- Node.js 20.20.1 or newer. From the repository root, `nvm use` selects the version in `.nvmrc`.
+- npm
+- JetBrains only: JDK 17 and IntelliJ IDEA (Community or Ultimate)
+
+### Install and build
+
+From the repository root:
+
+```bash
+./scripts/install-dependencies.sh
+```
+
+On Windows:
+
+```powershell
+.\scripts\install-dependencies.ps1
+```
+
+The script installs dependencies and builds the shared packages, the GUI, the VS Code extension, and the core binary. When it finishes, these files exist:
+
+- `extensions/vscode/out/extension.js`
+- `binary/out/index.js`
+
+### VS Code and Cursor
+
+Open the repository root, then start the extension from this checkout:
+
+1. Open **Run and Debug**.
+2. Select **Launch extension** to open Cursor, or **Launch extension (VS Code)** to open Visual Studio Code.
+3. Start debugging.
+
+**Launch extension** opens a second Cursor window. **Launch extension (VS Code)** starts the installed Visual Studio Code and attaches the debugger to its extension host. The next launch replaces the previous debug window. The GUI dev server on port 5173 starts with that window when it is not already running, and stops when the window closes. Reload the window after changes in `core` or `extensions/vscode`. Changes in `gui` hot-reload. Both sessions write Continue config to `extensions/.continue-debug`.
+
+To install into an editor you already use, package a VSIX:
+
+```bash
+cd extensions/vscode
+npm run package
+```
+
+The package is `extensions/vscode/build/continue-<version>.vsix`. In VS Code or Cursor, run **Extensions: Install from VSIX...** and select that file.
+
+### JetBrains
+
+Open the repository root in IntelliJ IDEA so the run configurations resolve `binary/`, `gui/`, and `extensions/intellij`. Use JDK 17 for the Gradle project.
+
+In the run widget, select **Run Continue** and start it in Debug. On Community Edition, select **Run Continue (CE)**.
+
+A second IDE window opens with the plugin installed. This debug session writes config to `extensions/.continue-debug` and leaves `~/.continue` unchanged.
+
+To install a packaged plugin into an existing IDE:
+
+```bash
+cd extensions/intellij
+./gradlew buildPlugin
+```
+
+On Windows, run `gradlew.bat buildPlugin`. The ZIP is `extensions/intellij/build/distributions/continue-*.zip`. Install it from **Settings | Plugins | gear | Install Plugin from Disk**.
 
 ## Contributors
 

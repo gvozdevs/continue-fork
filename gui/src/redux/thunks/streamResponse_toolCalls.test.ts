@@ -1891,7 +1891,7 @@ describe("streamResponseThunk - tool calls", () => {
       initialState.ui.toolSettings = {
         [terminalName]: "allowedWithoutPermission",
       };
-      initialState.ui.autoRunTerminalCommands = false;
+      initialState.ui.autoRunCommands = [];
       initialState.config.config.tools = [terminalTool];
       const mockStore = createMockStore(initialState);
 

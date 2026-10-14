@@ -93,17 +93,233 @@ export function isTerminalCommandTool(toolName: string): boolean {
 }
 
 export interface AutoRunSettings {
-  autoRunSafeTerminalCommands: boolean;
-  autoRunDangerousTerminalCommands: boolean;
+  autoRunCommands: string[];
+  /** Base commands that always require confirmation. */
+  dangerousCommands: string[];
   autoRunMcpTools: boolean;
 }
 
+/** Default base commands that run without confirmation. */
+export const DEFAULT_AUTO_RUN_COMMANDS: string[] = [
+  "ls",
+  "pwd",
+  "cat",
+  "echo",
+  "git",
+  "grep",
+  "find",
+  "head",
+  "tail",
+  "which",
+  "wc",
+  "npm",
+  "yarn",
+  "pnpm",
+];
+
+/** Default base commands that always ask before running. */
+export const DEFAULT_DANGEROUS_COMMANDS: string[] = [
+  "wget",
+  "sudo",
+  "su",
+  "rm",
+  "dd",
+  "chmod",
+  "chown",
+  "ssh",
+  "scp",
+  "rsync",
+  "nc",
+  "netcat",
+  "eval",
+  "exec",
+  "kill",
+  "killall",
+  "pkill",
+  "reboot",
+  "shutdown",
+  "mkfs",
+  "iptables",
+];
+
+/** Flags that make an allowlisted `find` unsafe to auto-run. */
+const FIND_DANGEROUS_FLAGS = new Set([
+  "-exec",
+  "-execdir",
+  "-ok",
+  "-okdir",
+  "-delete",
+]);
+
+export interface ParsedTerminalCommand {
+  base: string;
+  args: string[];
+}
+
 /**
- * Applies auto-run toggles on top of the stored tool policy and the
+ * Extracts the base command name: the first whitespace-separated token,
+ * using only the basename if a path was given (e.g. `/usr/bin/git` → `git`).
+ */
+export function extractTerminalBaseCommand(
+  command: string | null | undefined,
+): string | null {
+  return parseTerminalCommand(command)?.base ?? null;
+}
+
+/**
+ * Parses a single shell segment into base command + args.
+ * Skips leading `VAR=value` assignments. Basename-normalizes the command.
+ */
+export function parseTerminalCommand(
+  command: string | null | undefined,
+): ParsedTerminalCommand | null {
+  if (!command || typeof command !== "string") {
+    return null;
+  }
+  const trimmed = command.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  let index = 0;
+  // Skip env assignments: FOO=bar BAZ=1 find ...
+  while (index < tokens.length && /^[A-Za-z_][\w]*=.*/.test(tokens[index])) {
+    index++;
+  }
+  if (index >= tokens.length) {
+    return null;
+  }
+
+  const rawCommand = tokens[index];
+  const basename = rawCommand.split(/[/\\]/).pop() ?? rawCommand;
+  const base = basename.trim().toLowerCase();
+  if (!base) {
+    return null;
+  }
+
+  return {
+    base,
+    args: tokens.slice(index + 1),
+  };
+}
+
+/**
+ * Splits a command line into segments on common shell operators.
+ * Quote-unaware — good enough for allowlist checks; ambiguous cases ask first.
+ */
+export function splitTerminalCommandSegments(command: string): string[] {
+  return command
+    .split(/(?:&&|\|\||;|\n|\|)/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+/** Resolves the command string from run_terminal_command tool args. */
+export function getTerminalCommandFromArgs(
+  args: Record<string, unknown> | undefined | null,
+): string {
+  if (!args) {
+    return "";
+  }
+  if (typeof args.command === "string") {
+    return args.command;
+  }
+  if (Array.isArray(args.commands)) {
+    return args.commands
+      .filter((item): item is string => typeof item === "string")
+      .join("; ");
+  }
+  return "";
+}
+
+/**
+ * Extra safety for allowlisted commands: some bases are only safe with
+ * certain args (e.g. `find` without `-exec` / `-delete`).
+ */
+function isAllowlistedInvocationSafe(parsed: ParsedTerminalCommand): boolean {
+  if (parsed.base === "find") {
+    return !parsed.args.some((arg) => FIND_DANGEROUS_FLAGS.has(arg));
+  }
+  if (parsed.base === "grep") {
+    return !parsed.args.includes("--exec");
+  }
+  return true;
+}
+
+function toCommandSet(commands: string[]): Set<string> {
+  return new Set(
+    commands.map((entry) => entry.trim().toLowerCase()).filter(Boolean),
+  );
+}
+
+/** True if any segment's base command is on the dangerous list. */
+export function isCommandDangerous(
+  command: string | null | undefined,
+  dangerousCommands: string[],
+): boolean {
+  if (!command || typeof command !== "string" || !command.trim()) {
+    return false;
+  }
+  const denylist = toCommandSet(dangerousCommands);
+  if (denylist.size === 0) {
+    return false;
+  }
+
+  for (const segment of splitTerminalCommandSegments(command)) {
+    const parsed = parseTerminalCommand(segment);
+    if (parsed && denylist.has(parsed.base)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function isCommandAutoApproved(
+  command: string | null | undefined,
+  autoRunCommands: string[],
+  dangerousCommands: string[] = [],
+): boolean {
+  if (!command || typeof command !== "string" || !command.trim()) {
+    return false;
+  }
+
+  // Dangerous always wins over the allowlist.
+  if (isCommandDangerous(command, dangerousCommands)) {
+    return false;
+  }
+
+  const allowlist = toCommandSet(autoRunCommands);
+  if (allowlist.size === 0) {
+    return false;
+  }
+
+  const segments = splitTerminalCommandSegments(command);
+  if (segments.length === 0) {
+    return false;
+  }
+
+  for (const segment of segments) {
+    const parsed = parseTerminalCommand(segment);
+    if (!parsed || !allowlist.has(parsed.base)) {
+      return false;
+    }
+    if (!isAllowlistedInvocationSafe(parsed)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Applies auto-run settings on top of the stored tool policy and the
  * command-level security evaluation.
  *
- * Safe terminal commands are the security whitelist (ls, git status, …).
- * Dangerous terminal commands are Ask First plus blocked (curl, sudo, rm -rf, …).
+ * Terminal: commands on `dangerousCommands` always ask. Otherwise auto-run
+ * when every segment's base is in `autoRunCommands` and passes per-command
+ * safety checks (e.g. `find` without `-exec`/`-delete`).
+ * Execute and remember moves a base command from dangerous → auto-run.
  * MCP tools have no command-level classifier — the toggle covers every call.
  */
 export function resolveAutoRunPolicy(
@@ -112,6 +328,7 @@ export function resolveAutoRunPolicy(
   basePolicy: ToolPolicy,
   dynamicPolicy: ToolPolicy,
   autoRun: AutoRunSettings,
+  commandText?: string | null,
 ): ToolPolicy {
   if (basePolicy === "disabled") {
     return "disabled";
@@ -125,21 +342,17 @@ export function resolveAutoRunPolicy(
     return dynamicPolicy;
   }
 
-  const isDangerousCommand =
-    dynamicPolicy === "disabled" ||
-    dynamicPolicy === "allowedWithPermission";
-
-  if (isDangerousCommand) {
-    if (autoRun.autoRunDangerousTerminalCommands) {
-      return "allowedWithoutPermission";
-    }
-    return dynamicPolicy;
-  }
-
-  if (autoRun.autoRunSafeTerminalCommands) {
+  if (
+    isCommandAutoApproved(
+      commandText,
+      autoRun.autoRunCommands,
+      autoRun.dangerousCommands,
+    )
+  ) {
     return "allowedWithoutPermission";
   }
 
+  // Dangerous, unknown, or unsafe allowlisted invocation: ask first.
   return "allowedWithPermission";
 }
 

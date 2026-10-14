@@ -34,10 +34,7 @@ import {
 import { findUriInDirs, getUriPathBasename } from "core/util/uri";
 import { findLastIndex } from "lodash";
 import { v4 as uuidv4 } from "uuid";
-import {
-  EMPTY_TOOL_LOOP,
-  type ToolLoopState,
-} from "core/tools/toolCallLoop";
+import { EMPTY_TOOL_LOOP, type ToolLoopState } from "core/tools/toolCallLoop";
 import { type InlineErrorMessageType } from "../../components/mainInput/InlineErrorMessage";
 import { toolCallCtxItemToCtxItemWithId } from "../../pages/gui/ToolCallDiv/utils";
 import { addToolCallDeltaToState, isEditTool } from "../../util/toolCallState";
@@ -156,6 +153,31 @@ function applyToolCallDelta(
     // Add new tool call state for a newly discovered tool call
     toolCallStates.push(updatedState);
   }
+}
+
+const THINK_CLOSE = "</think>";
+const THINK_OPEN = "<think>";
+
+/**
+ * Some models emit reasoning with only a closing think tag.
+ * Text before the first close tag is reasoning. Paired tags stay on the
+ * existing open/close path: this returns null when `<think>` comes first.
+ */
+function splitUnopenedThink(
+  text: string,
+): { reasoning: string; answer: string } | null {
+  const closeAt = text.indexOf(THINK_CLOSE);
+  if (closeAt === -1) {
+    return null;
+  }
+  const openAt = text.indexOf(THINK_OPEN);
+  if (openAt !== -1 && openAt < closeAt) {
+    return null;
+  }
+  return {
+    reasoning: text.slice(0, closeAt).trim(),
+    answer: text.slice(closeAt + THINK_CLOSE.length).trimStart(),
+  };
 }
 
 /**
@@ -441,10 +463,7 @@ export const sessionSlice = createSlice({
     },
     clearStalledAssistantReply: (state) => {
       let index = state.history.length - 1;
-      while (
-        index >= 0 &&
-        state.history[index].message.role === "thinking"
-      ) {
+      while (index >= 0 && state.history[index].message.role === "thinking") {
         index -= 1;
       }
       const assistant = state.history[index];
@@ -695,8 +714,27 @@ export const sessionSlice = createSlice({
             } else {
               // Note this only works because new message above
               // was already rendered from parts to string
-              if (
-                lastMessage.content.length > 0 ||
+              const priorContent =
+                typeof lastMessage.content === "string"
+                  ? lastMessage.content
+                  : "";
+              // No opening tag yet: the first </think> closes reasoning that
+              // was streamed into the answer. Already-closed reasoning stays
+              // out of later chunks, including a literal </think> in the answer.
+              const unopenedThink = !lastItem.reasoning
+                ? splitUnopenedThink(priorContent + messageContent)
+                : null;
+              if (unopenedThink && message.role !== "tool") {
+                lastItem.reasoning = {
+                  text: unopenedThink.reasoning,
+                  startAt: Date.now(),
+                  endAt: Date.now(),
+                  active: false,
+                };
+                lastMessage.content = unopenedThink.answer;
+                handleToolCallsInMessage(message, lastItem);
+              } else if (
+                priorContent.length > 0 ||
                 messageContent.trim().length > 0
               ) {
                 lastMessage.content += messageContent;

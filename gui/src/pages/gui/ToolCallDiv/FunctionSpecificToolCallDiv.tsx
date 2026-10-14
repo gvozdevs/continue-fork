@@ -129,7 +129,15 @@ function FunctionSpecificToolCallDiv({
     case BuiltInToolNames.RunTerminalCommand:
       return (
         <RunTerminalCommand
-          command={args?.command ?? ""}
+          command={
+            typeof args?.command === "string"
+              ? args.command
+              : Array.isArray(args?.commands)
+                ? args.commands
+                    .filter((c: unknown) => typeof c === "string")
+                    .join("; ")
+                : ""
+          }
           toolCallState={toolCallState}
           toolCallId={toolCall.id}
         />

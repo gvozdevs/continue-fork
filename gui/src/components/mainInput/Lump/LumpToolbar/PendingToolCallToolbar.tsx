@@ -1,13 +1,21 @@
 import { useAppDispatch, useAppSelector } from "../../../../redux/hooks";
 import { selectPendingToolCalls } from "../../../../redux/selectors/selectToolCalls";
+import { rememberAutoRunCommand } from "../../../../redux/slices/uiSlice";
 import { callToolById } from "../../../../redux/thunks/callToolById";
 import { cancelToolCallThunk } from "../../../../redux/thunks/cancelToolCall";
 import { getAltKeyLabel, getMetaKeyLabel, isJetBrains } from "../../../../util";
+import {
+  extractTerminalBaseCommand,
+  getTerminalCommandFromArgs,
+  isTerminalCommandTool,
+  splitTerminalCommandSegments,
+  parseTerminalCommand,
+} from "../../../../util/toolCallState";
 import { Button } from "../../../ui";
 import { useMainEditor } from "../../TipTapEditor";
 
 export const generateToolCallButtonTestId = (
-  action: "accept" | "reject",
+  action: "accept" | "reject" | "remember",
   toolCallId: string,
 ) => {
   return `${action}-tool-call-button-${toolCallId}`;
@@ -27,6 +35,34 @@ export function PendingToolCallToolbar() {
     void dispatch(callToolById({ toolCallId }));
   };
 
+  const handleAcceptAndRemember = (toolCallId: string) => {
+    const toolCall = pendingToolCalls.find(
+      (candidate) => candidate.toolCallId === toolCallId,
+    );
+    if (toolCall && isTerminalCommandTool(toolCall.toolCall.function.name)) {
+      const commandText = getTerminalCommandFromArgs(
+        toolCall.processedArgs ?? toolCall.parsedArgs,
+      );
+      // Remember every unique base command in the line (chains included),
+      // removing each from the dangerous list and adding to auto-run.
+      const bases = new Set<string>();
+      for (const segment of splitTerminalCommandSegments(commandText)) {
+        const parsed = parseTerminalCommand(segment);
+        if (parsed?.base) {
+          bases.add(parsed.base);
+        }
+      }
+      const fallback = extractTerminalBaseCommand(commandText);
+      if (fallback) {
+        bases.add(fallback);
+      }
+      for (const base of bases) {
+        dispatch(rememberAutoRunCommand(base));
+      }
+    }
+    void dispatch(callToolById({ toolCallId }));
+  };
+
   const handleReject = (toolCallId: string) => {
     // put cursor in editor after last rejection
     if (pendingToolCalls.length === 1) {
@@ -37,53 +73,102 @@ export function PendingToolCallToolbar() {
 
   return (
     <div className="flex w-full flex-col pb-0.5">
-      {pendingToolCalls.map((toolCall, index) => (
-        <div
-          key={toolCall.toolCallId}
-          className="border-input bg-input flex items-center gap-2 rounded border"
-        >
-          <span className="text-description flex-1 truncate text-xs italic">
-            {toolCall.tool?.displayTitle ?? toolCall.toolCall.function.name}
-          </span>
+      {pendingToolCalls.map((toolCall, index) => {
+        const isTerminal = isTerminalCommandTool(
+          toolCall.toolCall.function.name,
+        );
+        const title =
+          toolCall.tool?.displayTitle ?? toolCall.toolCall.function.name;
+        const commandPreview = isTerminal
+          ? getTerminalCommandFromArgs(
+              toolCall.processedArgs ?? toolCall.parsedArgs,
+            )
+          : "";
 
-          <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-description-muted my-1 font-medium"
-              onClick={() => handleReject(toolCall.toolCallId)}
-              data-testid={generateToolCallButtonTestId(
-                "reject",
-                toolCall.toolCallId,
-              )}
-            >
-              {/* JetBrains overrides cmd+backspace, so we have to use another shortcut */}
-              {index === 0 && (
-                <span className="text-2xs mr-1">
-                  {jetbrains ? getAltKeyLabel() : getMetaKeyLabel()}⌫
-                </span>
-              )}
-              <span>Reject</span>
-            </Button>
+        return (
+          <div
+            key={toolCall.toolCallId}
+            className="border-input bg-input flex items-center gap-2 rounded border"
+          >
+            <span className="text-description flex-1 truncate text-xs italic">
+              {isTerminal && commandPreview
+                ? `${title}: ${commandPreview}`
+                : title}
+            </span>
 
-            <Button
-              variant="primary"
-              size="sm"
-              className="my-1 font-medium"
-              onClick={() => handleAccept(toolCall.toolCallId)}
-              data-testid={generateToolCallButtonTestId(
-                "accept",
-                toolCall.toolCallId,
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-description-muted my-1 font-medium"
+                onClick={() => handleReject(toolCall.toolCallId)}
+                data-testid={generateToolCallButtonTestId(
+                  "reject",
+                  toolCall.toolCallId,
+                )}
+              >
+                {/* JetBrains overrides cmd+backspace, so we have to use another shortcut */}
+                {index === 0 && (
+                  <span className="text-2xs mr-1">
+                    {jetbrains ? getAltKeyLabel() : getMetaKeyLabel()}⌫
+                  </span>
+                )}
+                <span>Reject</span>
+              </Button>
+
+              {isTerminal ? (
+                <>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="my-1 font-medium"
+                    onClick={() => handleAccept(toolCall.toolCallId)}
+                    data-testid={generateToolCallButtonTestId(
+                      "accept",
+                      toolCall.toolCallId,
+                    )}
+                  >
+                    {index === 0 && (
+                      <span className="text-2xs mr-1">
+                        {getMetaKeyLabel()}⏎
+                      </span>
+                    )}
+                    <span>Execute</span>
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className="my-1 font-medium"
+                    onClick={() => handleAcceptAndRemember(toolCall.toolCallId)}
+                    data-testid={generateToolCallButtonTestId(
+                      "remember",
+                      toolCall.toolCallId,
+                    )}
+                  >
+                    <span>Execute and remember</span>
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="my-1 font-medium"
+                  onClick={() => handleAccept(toolCall.toolCallId)}
+                  data-testid={generateToolCallButtonTestId(
+                    "accept",
+                    toolCall.toolCallId,
+                  )}
+                >
+                  {index === 0 && (
+                    <span className="text-2xs mr-1">{getMetaKeyLabel()}⏎</span>
+                  )}
+                  <span>Accept</span>
+                </Button>
               )}
-            >
-              {index === 0 && (
-                <span className="text-2xs mr-1">{getMetaKeyLabel()}⏎</span>
-              )}
-              <span>Accept</span>
-            </Button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
