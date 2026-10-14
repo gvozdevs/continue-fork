@@ -178,3 +178,6 @@ keys
 .copy-status
 .copy-log
 
+# Packaged IDE extensions (often >100 MB; GitHub rejects the push)
+*.vsix
+

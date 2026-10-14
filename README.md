@@ -108,6 +108,39 @@ npm run package
 
 The package is `extensions/vscode/build/continue-<version>.vsix`. In VS Code or Cursor, run **Extensions: Install from VSIX...** and select that file.
 
+#### Package for Windows (from macOS or Linux)
+
+A VSIX includes native binaries (sqlite, ripgrep, LanceDB, onnxruntime). Build with an explicit Windows target; otherwise the package matches the host OS and will not run on Windows.
+
+Use Node from `.nvmrc` (`nvm use`), then:
+
+```bash
+cd extensions/vscode
+node scripts/prepackage.js --target win32-x64
+node scripts/package.js --target win32-x64
+```
+
+Output: `extensions/vscode/build/continue-win32-x64-<version>.vsix`.
+
+Do not commit `.vsix` files. GitHub rejects blobs over 100 MB (`GH001`), and Windows packages are often larger than that.
+
+If a large `.vsix` was already committed and `git push` fails:
+
+```bash
+# stop tracking the file (keep it on disk)
+git rm --cached continue-win32-x64-*.vsix
+# or any other path that was added, e.g. continue-*.vsix at the repo root
+
+# remove it from commits that are not on the remote yet
+FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch -f --index-filter \
+  'git rm --cached --ignore-unmatch continue-win32-x64-2.3.0.vsix' \
+  origin/main..HEAD
+
+git push -u origin HEAD
+```
+
+`*.vsix` is in `.gitignore`. Keep built packages under `extensions/vscode/build/` (also ignored) and share them outside git (release, Drive, etc.).
+
 ### JetBrains
 
 Open the repository root in IntelliJ IDEA so the run configurations resolve `binary/`, `gui/`, and `extensions/intellij`. Use JDK 17 for the Gradle project.
