@@ -36,6 +36,8 @@ export interface ToolRoundRecord {
   files: string[];
   reads: string[];
   writes: string[];
+  /** Last successful edit arguments per file, keyed by normalized path. */
+  editSignature: Record<string, string>;
   changed: boolean | null;
 }
 
@@ -90,8 +92,7 @@ export function noteToolBatch(
   state: ToolLoopState,
   signature: string,
 ): { state: ToolLoopState; action: "continue" | "warn" | "stop" } {
-  const consecutive =
-    state.signature === signature ? state.consecutive + 1 : 1;
+  const consecutive = state.signature === signature ? state.consecutive + 1 : 1;
   const next: ToolLoopState = {
     ...state,
     signature,
@@ -142,11 +143,16 @@ export function noteToolBatchOutcome(
   const prior = last.writes
     .map((file) => next.fileOutput[file] ?? "")
     .join("\n---\n");
-  const changed = outcome.ok && (prior === "" || prior !== outcome.output);
+  const current = last.writes
+    .map((file) => last.editSignature[file] ?? "")
+    .join("\n---\n");
+  // The tool status line is the same for every successful edit of a file.
+  // Progress is a different edit payload, or the first successful write.
+  const changed = outcome.ok && (prior === "" || prior !== current);
   const fileOutput = { ...next.fileOutput };
   if (outcome.ok) {
     for (const file of last.writes) {
-      fileOutput[file] = outcome.output;
+      fileOutput[file] = last.editSignature[file] ?? "";
     }
   }
   last.changed = changed;
@@ -220,7 +226,10 @@ export function turnSpokenText(
     if (item.reasoning?.text) {
       parts.push(item.reasoning.text);
     }
-    if (typeof item.message.content === "string" && item.message.content.trim()) {
+    if (
+      typeof item.message.content === "string" &&
+      item.message.content.trim()
+    ) {
       parts.push(item.message.content);
     }
   }
@@ -295,7 +304,9 @@ export function isRepeatedPhrase(
       continue;
     }
     const tail = sentences.slice(-need);
-    const repeats = tail.every((sentence, index) => sentence === tail[index % size]);
+    const repeats = tail.every(
+      (sentence, index) => sentence === tail[index % size],
+    );
     if (repeats) {
       return true;
     }
@@ -344,6 +355,7 @@ function classifyRound(
   const reads: string[] = [];
   const writes: string[] = [];
   const files: string[] = [];
+  const editSignature: Record<string, string> = {};
   for (const call of calls) {
     const args = parseToolArgs(call.arguments);
     if (READ_TOOLS.has(call.name)) {
@@ -361,17 +373,25 @@ function classifyRound(
       continue;
     }
     const filepaths = filePathsFromToolArg(args?.filepath);
+    const signature = WRITE_TOOLS.has(call.name)
+      ? toolCallSignature(call.name, call.arguments)
+      : "";
     for (const filepath of filepaths) {
       files.push(filepath);
-      if (WRITE_TOOLS.has(call.name)) {
-        writes.push(filepath);
+      if (!signature) {
+        continue;
       }
+      writes.push(filepath);
+      editSignature[filepath] = editSignature[filepath]
+        ? `${editSignature[filepath]}\n---\n${signature}`
+        : signature;
     }
   }
   return {
     files: [...new Set(files)],
     reads,
     writes,
+    editSignature,
     changed: null,
   };
 }

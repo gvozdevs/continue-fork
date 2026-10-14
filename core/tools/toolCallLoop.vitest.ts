@@ -141,7 +141,10 @@ describe("tool call loop", () => {
       assistantText: "Шаг 0: смотрю доменную модель, вариант 0.",
     });
     for (let i = 1; i < FILE_CYCLE_WINDOW; i++) {
-      state = noteToolBatchOutcome(last.state, { ok: true, output: "same" });
+      state = noteToolBatchOutcome(last.state, {
+        ok: true,
+        output: `Successfully edited file, step ${i}`,
+      });
       last = noteAgentProgress(state, {
         calls: [i % 2 === 0 ? readCall : writeCall],
         assistantText: `Шаг ${i}: смотрю доменную модель, вариант ${i}.`,
@@ -149,6 +152,34 @@ describe("tool call loop", () => {
     }
     expect(last.action).toBe("stop");
     expect(last.notice).toBe(TOOL_CYCLE_STOP);
+  });
+
+  it("keeps going when each edit of the same file is different", () => {
+    let state = EMPTY_TOOL_LOOP;
+    const readCall = {
+      name: "read_file",
+      arguments: JSON.stringify({ filepath: "writer.go" }),
+    };
+    const success = "Successfully edited file:///writer.go";
+    let last = noteAgentProgress(state, {
+      calls: [readCall],
+      assistantText: "Смотрю writer.go.",
+    });
+    for (let i = 1; i < FILE_CYCLE_WINDOW; i++) {
+      state = noteToolBatchOutcome(last.state, { ok: true, output: success });
+      const writeCall = {
+        name: "single_find_and_replace",
+        arguments: JSON.stringify({
+          filepath: "writer.go",
+          replacements: [{ old_text: `create-${i}`, new_text: `save-${i}` }],
+        }),
+      };
+      last = noteAgentProgress(state, {
+        calls: [i % 2 === 0 ? readCall : writeCall],
+        assistantText: `Шаг ${i}: переименовываю.`,
+      });
+    }
+    expect(last.action).toBe("continue");
   });
 
   it("runs a different file read when the reply text repeats", () => {
@@ -346,7 +377,12 @@ describe("tool call loop", () => {
           toolCallStates: [{ toolCallId: "1" }],
         },
         { message: { role: "tool", content: "edited" } },
-        { message: { role: "assistant", content: "Now let me create the files." } },
+        {
+          message: {
+            role: "assistant",
+            content: "Now let me create the files.",
+          },
+        },
       ]),
     ).toBe(false);
     expect(
@@ -364,7 +400,8 @@ describe("tool call loop", () => {
   it("allows another phrase nudge after a successful tool", () => {
     const nudged = { ...EMPTY_TOOL_LOOP, phraseNudgeSent: true };
     expect(
-      noteToolBatchOutcome(nudged, { ok: true, output: "edited" }).phraseNudgeSent,
+      noteToolBatchOutcome(nudged, { ok: true, output: "edited" })
+        .phraseNudgeSent,
     ).toBe(false);
     expect(
       noteToolBatchOutcome(nudged, { ok: false, output: "no" }).phraseNudgeSent,
