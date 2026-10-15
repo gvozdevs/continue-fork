@@ -2,11 +2,13 @@ import { ToolCallDelta, ToolCallState } from "core";
 import { BuiltInToolNames } from "core/tools/builtIn";
 import {
   addToolCallDeltaToState,
+  extractRememberableBaseCommands,
   extractTerminalBaseCommand,
   getTerminalCommandFromArgs,
   isCommandAutoApproved,
   isCommandDangerous,
   isMcpTool,
+  isValidBaseCommandName,
   resolveAutoRunPolicy,
   shouldAutoAcceptApplyDiff,
   shouldSkipToolPermissionPrompt,
@@ -561,6 +563,67 @@ describe("extractTerminalBaseCommand", () => {
   it("returns null for empty input", () => {
     expect(extractTerminalBaseCommand("")).toBeNull();
     expect(extractTerminalBaseCommand(null)).toBeNull();
+  });
+
+  it("ignores PowerShell UTF-8 boilerplate and assignments", () => {
+    expect(
+      extractTerminalBaseCommand(
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [Console]::OutputEncoding; git status",
+      ),
+    ).toBe("git");
+    expect(
+      extractTerminalBaseCommand("$OutputEncoding = [Console]::OutputEncoding"),
+    ).toBeNull();
+  });
+});
+
+describe("extractRememberableBaseCommands", () => {
+  it("skips PowerShell noise and pipeline tails", () => {
+    expect(
+      extractRememberableBaseCommands(
+        "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; $OutputEncoding = [Console]::OutputEncoding; git status | Select-Object -First 5",
+      ),
+    ).toEqual(["git"]);
+  });
+
+  it("remembers the first command of each statement", () => {
+    expect(
+      extractRememberableBaseCommands("pwd; ls -la | Select-Object -First 3"),
+    ).toEqual(["pwd", "ls"]);
+  });
+
+  it("accepts PowerShell cmdlets as valid names", () => {
+    expect(isValidBaseCommandName("get-childitem")).toBe(true);
+    expect(isValidBaseCommandName("$outputencoding")).toBe(false);
+    expect(isValidBaseCommandName("[console]::outputencoding")).toBe(false);
+    expect(extractRememberableBaseCommands("Get-ChildItem docs")).toEqual([
+      "get-childitem",
+    ]);
+  });
+
+  it("does not leak python -c payload into the allowlist", () => {
+    expect(
+      extractRememberableBaseCommands(
+        `python -c "import os; print(os.getcwd()); x=1"`,
+      ),
+    ).toEqual(["python"]);
+    expect(
+      extractRememberableBaseCommands(
+        `python3 -c 'import sys; print(sys.version)'`,
+      ),
+    ).toEqual(["python3"]);
+    expect(
+      extractRememberableBaseCommands(`py -3 -c "print(1); print(2)"`),
+    ).toEqual(["py"]);
+  });
+
+  it("does not split on semicolons inside quotes for auto-approve", () => {
+    expect(
+      isCommandAutoApproved(`python -c "import os; print(1)"`, ["python"]),
+    ).toBe(true);
+    expect(
+      isCommandAutoApproved(`python -c "import os; print(1)"`, ["print"]),
+    ).toBe(false);
   });
 });
 

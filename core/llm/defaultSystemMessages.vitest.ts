@@ -81,6 +81,7 @@ describe("default templates", () => {
     expect(msg).toContain("Working directory: /tmp/ws");
     expect(msg).toContain("Today's date: 2026-10-14");
     expect(DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE).toContain("{{environment}}");
+    expect(DEFAULT_AGENT_SYSTEM_MESSAGE_TEMPLATE).toContain("<think>");
   });
 
   it("plan template stays read-only oriented", () => {
@@ -89,5 +90,6 @@ describe("default templates", () => {
     expect(msg).toContain("read_file");
     expect(msg.toLowerCase()).not.toContain("claude");
     expect(DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE).toContain("{{ask_question}}");
+    expect(DEFAULT_PLAN_SYSTEM_MESSAGE_TEMPLATE).toContain("<think>");
   });
 });

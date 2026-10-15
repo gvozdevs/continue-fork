@@ -5,11 +5,9 @@ import { callToolById } from "../../../../redux/thunks/callToolById";
 import { cancelToolCallThunk } from "../../../../redux/thunks/cancelToolCall";
 import { getAltKeyLabel, getMetaKeyLabel, isJetBrains } from "../../../../util";
 import {
-  extractTerminalBaseCommand,
+  extractRememberableBaseCommands,
   getTerminalCommandFromArgs,
   isTerminalCommandTool,
-  splitTerminalCommandSegments,
-  parseTerminalCommand,
 } from "../../../../util/toolCallState";
 import { Button } from "../../../ui";
 import { useMainEditor } from "../../TipTapEditor";
@@ -43,20 +41,9 @@ export function PendingToolCallToolbar() {
       const commandText = getTerminalCommandFromArgs(
         toolCall.processedArgs ?? toolCall.parsedArgs,
       );
-      // Remember every unique base command in the line (chains included),
-      // removing each from the dangerous list and adding to auto-run.
-      const bases = new Set<string>();
-      for (const segment of splitTerminalCommandSegments(commandText)) {
-        const parsed = parseTerminalCommand(segment);
-        if (parsed?.base) {
-          bases.add(parsed.base);
-        }
-      }
-      const fallback = extractTerminalBaseCommand(commandText);
-      if (fallback) {
-        bases.add(fallback);
-      }
-      for (const base of bases) {
+      // Remember real base commands only (skips PowerShell boilerplate,
+      // assignments, and pipeline tails like Select-Object).
+      for (const base of extractRememberableBaseCommands(commandText)) {
         dispatch(rememberAutoRunCommand(base));
       }
     }

@@ -156,6 +156,118 @@ export interface ParsedTerminalCommand {
   args: string[];
 }
 
+/** Matches the UTF-8 setup prefix Continue injects for Windows PowerShell. */
+const POWERSHELL_UTF8_PREFIX_RE =
+  /^\[Console\]::OutputEncoding\s*=\s*\[System\.Text\.Encoding\]::UTF8\s*;\s*\$OutputEncoding\s*=\s*\[Console\]::OutputEncoding\s*;\s*/i;
+
+/**
+ * True for names that are safe to store in the auto-run allowlist
+ * (e.g. git, ls, get-childitem) — not PowerShell noise like $x or [Type]::Prop.
+ */
+export function isValidBaseCommandName(
+  base: string | null | undefined,
+): boolean {
+  if (!base) {
+    return false;
+  }
+  if (
+    base.startsWith("$") ||
+    base.startsWith("[") ||
+    base.startsWith("-") ||
+    base.includes("=") ||
+    base.includes("::")
+  ) {
+    return false;
+  }
+  return /^[a-z][a-z0-9_.+-]*$/i.test(base);
+}
+
+export function stripPowerShellBoilerplate(command: string): string {
+  return command.replace(POWERSHELL_UTF8_PREFIX_RE, "").trim();
+}
+
+function isPowerShellAssignmentSegment(segment: string): boolean {
+  const trimmed = segment.trim();
+  if (/^\$[\w:.]+\s*=/.test(trimmed)) {
+    return true;
+  }
+  if (/^\[[^\]]+\]::[\w.]+\s*=/.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+/** Interpreters whose `-c` / `-m` payloads must not leak into the allowlist. */
+const SCRIPT_INTERPRETERS = new Set([
+  "python",
+  "python3",
+  "python2",
+  "py",
+  "node",
+  "nodejs",
+  "ruby",
+  "perl",
+  "php",
+  "lua",
+  "bash",
+  "sh",
+  "zsh",
+  "pwsh",
+  "powershell",
+]);
+
+/**
+ * Quote-aware split on shell operators. Does not split inside '…' / "…".
+ * `separators` is a set of operator strings to split on (longest match wins).
+ */
+export function splitIgnoringQuotes(
+  command: string,
+  separators: string[],
+): string[] {
+  const ordered = [...separators].sort((a, b) => b.length - a.length);
+  const parts: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    if (quote) {
+      current += ch;
+      // PowerShell/bash: backslash-escape inside double quotes; single quotes are literal.
+      if (ch === quote && (quote === "'" || command[i - 1] !== "\\")) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+
+    const matched = ordered.find((op) => command.startsWith(op, i));
+    if (matched) {
+      const trimmed = current.trim();
+      if (trimmed) {
+        parts.push(trimmed);
+      }
+      current = "";
+      i += matched.length - 1;
+      continue;
+    }
+
+    current += ch;
+  }
+
+  const trimmed = current.trim();
+  if (trimmed) {
+    parts.push(trimmed);
+  }
+  return parts;
+}
+
 /**
  * Extracts the base command name: the first whitespace-separated token,
  * using only the basename if a path was given (e.g. `/usr/bin/git` → `git`).
@@ -163,12 +275,16 @@ export interface ParsedTerminalCommand {
 export function extractTerminalBaseCommand(
   command: string | null | undefined,
 ): string | null {
-  return parseTerminalCommand(command)?.base ?? null;
+  const parsed = parseTerminalCommand(command);
+  if (!parsed || !isValidBaseCommandName(parsed.base)) {
+    return null;
+  }
+  return parsed.base;
 }
 
 /**
  * Parses a single shell segment into base command + args.
- * Skips leading `VAR=value` assignments. Basename-normalizes the command.
+ * Skips leading env / PowerShell assignments. Basename-normalizes the command.
  */
 export function parseTerminalCommand(
   command: string | null | undefined,
@@ -176,25 +292,38 @@ export function parseTerminalCommand(
   if (!command || typeof command !== "string") {
     return null;
   }
-  const trimmed = command.trim();
-  if (!trimmed) {
+  const trimmed = stripPowerShellBoilerplate(command.trim());
+  if (!trimmed || isPowerShellAssignmentSegment(trimmed)) {
     return null;
   }
 
   const tokens = trimmed.split(/\s+/).filter(Boolean);
   let index = 0;
-  // Skip env assignments: FOO=bar BAZ=1 find ...
+  // Skip Unix-style env assignments: FOO=bar BAZ=1 find ...
   while (index < tokens.length && /^[A-Za-z_][\w]*=.*/.test(tokens[index])) {
     index++;
+  }
+  // Skip PowerShell `$var = value` token triples at the start of a segment.
+  while (
+    index + 2 < tokens.length &&
+    /^\$[\w:.]+$/.test(tokens[index]) &&
+    tokens[index + 1] === "="
+  ) {
+    index += 3;
   }
   if (index >= tokens.length) {
     return null;
   }
 
   const rawCommand = tokens[index];
-  const basename = rawCommand.split(/[/\\]/).pop() ?? rawCommand;
-  const base = basename.trim().toLowerCase();
-  if (!base) {
+  // Strip call operator (&) and quotes PowerShell often wraps around paths.
+  const unwrapped = rawCommand.replace(/^&\s*/, "").replace(/^['"]|['"]$/g, "");
+  const basename = unwrapped.split(/[/\\]/).pop() ?? unwrapped;
+  const base = basename
+    .trim()
+    .toLowerCase()
+    .replace(/\.exe$/i, "");
+  if (!base || !isValidBaseCommandName(base)) {
     return null;
   }
 
@@ -206,13 +335,58 @@ export function parseTerminalCommand(
 
 /**
  * Splits a command line into segments on common shell operators.
- * Quote-unaware — good enough for allowlist checks; ambiguous cases ask first.
+ * Respects single/double quotes so `python -c "a; b"` stays one segment.
  */
 export function splitTerminalCommandSegments(command: string): string[] {
-  return command
-    .split(/(?:&&|\|\||;|\n|\|)/)
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
+  return splitIgnoringQuotes(stripPowerShellBoilerplate(command), [
+    "&&",
+    "||",
+    ";",
+    "\n",
+    "|",
+  ]).filter((segment) => !isPowerShellAssignmentSegment(segment));
+}
+
+/**
+ * Base commands worth storing via Execute and remember.
+ * Skips PowerShell UTF-8 boilerplate, assignments, pipeline tails, and
+ * code passed to interpreters via `-c` / `-m` (e.g. python -c "…").
+ */
+export function extractRememberableBaseCommands(
+  command: string | null | undefined,
+): string[] {
+  if (!command || typeof command !== "string" || !command.trim()) {
+    return [];
+  }
+  const cleaned = stripPowerShellBoilerplate(command);
+  // Statements only — do not split on `|` here; we take the first pipeline stage below.
+  const statements = splitIgnoringQuotes(cleaned, [
+    "&&",
+    "||",
+    ";",
+    "\n",
+  ]).filter((segment) => !isPowerShellAssignmentSegment(segment));
+
+  const bases: string[] = [];
+  const seen = new Set<string>();
+  for (const statement of statements) {
+    const firstStage =
+      splitIgnoringQuotes(statement, ["|"])[0]?.trim() ?? statement;
+    const parsed = parseTerminalCommand(firstStage);
+    if (!parsed || !isValidBaseCommandName(parsed.base)) {
+      continue;
+    }
+    // For `python -c "…"`, only remember `python` — never tokens from the payload.
+    if (!seen.has(parsed.base)) {
+      seen.add(parsed.base);
+      bases.push(parsed.base);
+    }
+    if (SCRIPT_INTERPRETERS.has(parsed.base)) {
+      // One interpreter invocation = one remembered command, ignore the rest of the statement.
+      continue;
+    }
+  }
+  return bases;
 }
 
 /** Resolves the command string from run_terminal_command tool args. */
@@ -295,13 +469,17 @@ export function isCommandAutoApproved(
   }
 
   const segments = splitTerminalCommandSegments(command);
-  if (segments.length === 0) {
+  const parsedSegments = segments
+    .map((segment) => parseTerminalCommand(segment))
+    .filter((parsed): parsed is ParsedTerminalCommand => parsed != null);
+
+  // Only real commands count — PowerShell boilerplate / assignments are ignored.
+  if (parsedSegments.length === 0) {
     return false;
   }
 
-  for (const segment of segments) {
-    const parsed = parseTerminalCommand(segment);
-    if (!parsed || !allowlist.has(parsed.base)) {
+  for (const parsed of parsedSegments) {
+    if (!allowlist.has(parsed.base)) {
       return false;
     }
     if (!isAllowlistedInvocationSafe(parsed)) {

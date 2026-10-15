@@ -1,4 +1,3 @@
-import { XMarkIcon } from "@heroicons/react/24/outline";
 import { FormEvent, KeyboardEvent, useState } from "react";
 import { Button } from "../../../components/ui";
 import { useAppDispatch, useAppSelector } from "../../../redux/hooks";
@@ -43,7 +42,7 @@ export function DangerousCommandsSetting() {
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
+      <div className="flex flex-wrap gap-1">
         {dangerousCommands.length === 0 && (
           <span className="text-description-muted text-xs italic">
             No dangerous commands configured.
@@ -52,16 +51,16 @@ export function DangerousCommandsSetting() {
         {dangerousCommands.map((command) => (
           <span
             key={command}
-            className="bg-badge text-badge-foreground border-border inline-flex items-center gap-1 rounded-full border border-solid px-2 py-0.5 font-mono text-xs"
+            className="text-description border-border/60 inline-flex items-center gap-1 rounded border border-solid bg-transparent px-1.5 py-px font-mono text-[11px] leading-4"
           >
             {command}
             <button
               type="button"
               aria-label={`Remove ${command}`}
-              className="hover:text-error -mr-0.5 flex items-center rounded-full p-0.5"
+              className="text-description-muted m-0 border-0 bg-transparent p-0 font-mono text-[11px] leading-none"
               onClick={() => dispatch(removeDangerousCommand(command))}
             >
-              <XMarkIcon className="h-3 w-3" />
+              ×
             </button>
           </span>
         ))}
