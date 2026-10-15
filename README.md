@@ -99,7 +99,9 @@ Open the repository root, then start the extension from this checkout:
 
 **Launch extension** opens a second Cursor window. **Launch extension (VS Code)** starts the installed Visual Studio Code and attaches the debugger to its extension host. The next launch replaces the previous debug window. The GUI dev server on port 5173 starts with that window when it is not already running, and stops when the window closes. Reload the window after changes in `core` or `extensions/vscode`. Changes in `gui` hot-reload. Both sessions write Continue config to `extensions/.continue-debug`.
 
-To install into an editor you already use, package a VSIX:
+If you packaged a Windows VSIX earlier, native binaries under `extensions/vscode` may still target `win32`. **Launch extension (VS Code)** runs `ensure-host-natives` before start and restores host sqlite / ripgrep / LanceDB / onnxruntime when they do not match this machine.
+
+To install into an editor you already use, package a VSIX for this machine:
 
 ```bash
 cd extensions/vscode
@@ -108,21 +110,30 @@ npm run package
 
 The package is `extensions/vscode/build/continue-<version>.vsix`. In VS Code or Cursor, run **Extensions: Install from VSIX...** and select that file.
 
-#### Package for Windows (from macOS or Linux)
+#### Package for Windows or Linux (cross-compile)
 
-A VSIX includes native binaries (sqlite, ripgrep, LanceDB, onnxruntime). Build with an explicit Windows target; otherwise the package matches the host OS and will not run on Windows.
+A VSIX includes native binaries (sqlite, ripgrep, LanceDB, onnxruntime). Build with an explicit target; otherwise the package matches the host OS.
 
-Use Node from `.nvmrc` (`nvm use`), then:
+Use Node from `.nvmrc` (`nvm use`). From the editor: **Tasks: Run Task**, then pick one of:
+
+| Task                                 | Output                                                      |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `vscode-extension:package-win32-x64` | `extensions/vscode/build/continue-win32-x64-<version>.vsix` |
+| `vscode-extension:package-linux-x64` | `extensions/vscode/build/continue-linux-x64-<version>.vsix` |
+
+Each task runs `prepackage` and `package` for that target, then `ensure-host-natives` so local debug still works on this machine. Linux is always `linux-x64`.
+
+From the terminal:
 
 ```bash
 cd extensions/vscode
 node scripts/prepackage.js --target win32-x64
 node scripts/package.js --target win32-x64
+# or --target linux-x64
+node scripts/ensure-host-natives.js
 ```
 
-Output: `extensions/vscode/build/continue-win32-x64-<version>.vsix`.
-
-Do not commit `.vsix` files. GitHub rejects blobs over 100 MB (`GH001`), and Windows packages are often larger than that.
+Do not commit `.vsix` files. GitHub rejects blobs over 100 MB (`GH001`), and cross-platform packages are often larger than that.
 
 If a large `.vsix` was already committed and `git push` fails:
 

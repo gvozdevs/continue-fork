@@ -105,6 +105,36 @@
       ]
     },
     {
+      "label": "vscode-extension:package-win32-x64",
+      "type": "shell",
+      "command": "node scripts/prepackage.js --target win32-x64 && node scripts/package.js --target win32-x64 && node scripts/ensure-host-natives.js",
+      "options": {
+        "cwd": "${workspaceFolder}/extensions/vscode"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "group": "build-tasks",
+        "panel": "shared",
+        "reveal": "always",
+        "revealProblems": "onProblem"
+      }
+    },
+    {
+      "label": "vscode-extension:package-linux-x64",
+      "type": "shell",
+      "command": "node scripts/prepackage.js --target linux-x64 && node scripts/package.js --target linux-x64 && node scripts/ensure-host-natives.js",
+      "options": {
+        "cwd": "${workspaceFolder}/extensions/vscode"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "group": "build-tasks",
+        "panel": "shared",
+        "reveal": "always",
+        "revealProblems": "onProblem"
+      }
+    },
+    {
       "label": "vscode-extension:continue-ui:build",
       "type": "shell",
       "command": "node",
@@ -313,7 +343,25 @@
       }
     },
     {
+      "label": "vscode-extension:ensure-host-natives",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "${workspaceFolder}/extensions/vscode/scripts/ensure-host-natives.js"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "group": "build-tasks",
+        "panel": "shared",
+        "reveal": "silent",
+        "revealProblems": "onProblem",
+        "close": true
+      }
+    },
+    {
       "label": "vscode-extension:launch-vscode",
+      "dependsOn": ["vscode-extension:ensure-host-natives"],
+      "dependsOrder": "sequence",
       "type": "shell",
       "command": "bash",
       "args": ["${workspaceFolder}/scripts/launch-vscode-debug.sh"],

@@ -147,6 +147,16 @@ if [[ ! -x "$CODE" ]]; then
   exit 1
 fi
 
+# Packaging for another OS (e.g. win32-x64) replaces sqlite/ripgrep/LanceDB/
+# onnxruntime under extensions/vscode. Restore host natives before debug.
+echo "Ensuring native binaries match this host..."
+node "$ROOT/extensions/vscode/scripts/ensure-host-natives.js"
+
+if [[ ! -f "$ROOT/extensions/vscode/out/extension.js" ]]; then
+  echo "Building extensions/vscode (out/extension.js is missing)..."
+  npm --prefix "$ROOT/extensions/vscode" run esbuild
+fi
+
 # Cursor exports these. Left set, the CLI talks to Cursor or Electron
 # starts as a Node process instead of a window.
 unset VSCODE_IPC_HOOK VSCODE_IPC_HOOK_CLI ELECTRON_RUN_AS_NODE NODE_OPTIONS
